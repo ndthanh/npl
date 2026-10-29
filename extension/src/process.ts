@@ -4,13 +4,14 @@ export function processResult(
   args: string[],
   cwd: string,
   timeout = 30000,
+  environment: NodeJS.ProcessEnv = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawn(program, args, {
       cwd,
       windowsHide: true,
       shell: false,
-      env: { ...process.env, PYTHONUTF8: "1" },
+      env: { ...process.env, PYTHONUTF8: "1", ...environment },
     });
     let out = "";
     p.stdout.setEncoding("utf8");
@@ -25,7 +26,7 @@ export function processResult(
       clearTimeout(timer);
       reject(e);
     });
-    p.on("exit", (code) => {
+    p.on("close", (code) => {
       clearTimeout(timer);
       code === 0
         ? resolve(out)

@@ -60,6 +60,7 @@ type Menu = {
 };
 let menu: Menu | undefined;
 const expandedActivities = new Set<string>();
+const expandedArtifacts = new Set<string>();
 const style = document.createElement("style");
 style.nonce = (document.currentScript as HTMLScriptElement).nonce;
 style.textContent = `
@@ -67,6 +68,7 @@ style.textContent = `
 style.textContent += `
 .activity{padding:0;overflow:hidden}.activity summary{display:flex;align-items:center;gap:8px;padding:11px;list-style:none;color:var(--vscode-foreground)}.activity summary::-webkit-details-marker{display:none}.activity summary .activity-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.activity[open] .chevron{transform:rotate(90deg)}.activity-body{padding:0 11px 11px}.activity pre{max-height:300px;white-space:pre-wrap;overflow-wrap:anywhere;margin:0}.activity small{font-size:10px}.queue{margin:0 0 7px;border:1px solid var(--vscode-panel-border);border-radius:8px;max-height:190px;overflow:auto}.queue-head,.queue-row{display:flex;align-items:center;gap:4px;padding:4px 7px;font-size:11px}.queue-head{color:var(--vscode-descriptionForeground)}.queue-row{border-top:1px solid var(--vscode-panel-border)}.queue-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.queue-row .icon-button{width:23px;height:23px}.voice-state{display:flex;align-items:center;gap:5px;padding:5px;font-size:11px;overflow-wrap:anywhere}.recording{color:var(--vscode-errorForeground)}.recording .codicon{animation:pulse 1s infinite}.voice-state>span{flex:1}.activity-error{color:var(--vscode-errorForeground);font-size:11px}.menu-group{font-size:9px;color:var(--vscode-descriptionForeground);text-transform:uppercase;padding:7px 8px 3px}
 `;
+style.textContent += `.artifacts-card{padding:0}.artifacts-card>summary{display:flex;align-items:center;gap:8px;padding:10px;color:var(--vscode-foreground);list-style:none}.artifacts-card summary::-webkit-details-marker{display:none}.artifact-list{max-height:220px;overflow:auto;padding:0 10px 8px}.artifacts-card[open]>summary .codicon-chevron-right{transform:rotate(90deg)}.artifact-list .artifact{min-height:36px}`;
 document.head.append(style);
 
 function contextChips(c: any) {
@@ -90,6 +92,8 @@ function contextChips(c: any) {
   );
 }
 function projectActions(c: any) {
+  if (c.checkpoint?.archivePlan && c.checkpoint.archivePlan.state !== "applied")
+    return `<div class="project-actions"><span class="danger">Cập nhật ZIP chưa hoàn tất</span>${button("checkpoint", "history", "Khôi phục trước cập nhật ZIP")}</div>`;
   if (!c.checkpoint || ["pending", "running"].includes(c.pending?.status))
     return "";
   return `<div class="project-actions"><button class="run primary" data-action="projectStart">${icon("play")}Chạy dự án</button>${button("projectCheck", "beaker", "Chạy kiểm tra từ nopilot.json")}${button("projectMenu", "ellipsis", "Git và khôi phục checkpoint")}</div>`;
@@ -99,7 +103,7 @@ function artifacts(c: any) {
     return c.checkpoint
       ? `<section class="card"><div class="card-title">${icon("check")}Project đã cập nhật</div>${projectActions(c)}</section>`
       : "";
-  return `<section class="card"><div class="card-title">${icon("files")}<span>Artifacts</span><small>${c.artifacts.length}</small></div>${c.artifacts.map((a: any) => `<div class="artifact">${icon(/\.zip$/i.test(a.name) ? "file-zip" : /\.log$/i.test(a.name) ? "output" : "file")}<span class="artifact-name" title="${esc(a.name)}">${esc(a.name)}</span><small>${Math.ceil(a.bytes / 1024)} KB</small>${button("openArtifact", "go-to-file", "Mở " + a.name, `data-id="${a.id}"`)}${button("folder", "folder-opened", "Mở thư mục chứa " + a.name, `data-id="${a.id}"`)}</div>`).join("")}${projectActions(c)}</section>`;
+  return `<details class="card artifacts-card" data-artifacts="${esc(c.id)}" ${expandedArtifacts.has(c.id) ? "open" : ""}><summary>${icon("chevron-right")}${icon("files")}<span>Artifacts</span><small>${c.artifacts.length}</small></summary><div class="artifact-list">${c.artifacts.map((a: any) => `<div class="artifact">${icon(/\.zip$/i.test(a.name) ? "file-zip" : /\.log$/i.test(a.name) ? "output" : "file")}<span class="artifact-name" title="${esc(a.name)}">${esc(a.name)}</span><small>${Math.ceil(a.bytes / 1024)} KB</small>${button("openArtifact", "go-to-file", "Mở " + a.name, `data-id="${a.id}"`)}${button("folder", "folder-opened", "Mở thư mục chứa " + a.name, `data-id="${a.id}"`)}</div>`).join("")}</div></details>${c.checkpoint ? `<section class="card">${projectActions(c)}</section>` : ""}`;
 }
 function assistantMarkup(text: string) {
   const match = /^\s*```json\s*\n([\s\S]*?)```\s*$/.exec(text);
@@ -118,7 +122,13 @@ function pendingCard(p: any) {
     body = "",
     action = "",
     symbol = "";
-  if (p.kind === "changes") {
+  if (p.kind === "archive") {
+    title = "Cập nhật project từ ZIP";
+    symbol = "file-zip";
+    const files = p.data.files;
+    body = `<p>Workspace: <code>${esc(p.data.root)}</code></p><p>${files.filter((f: any) => f.before === null).length} mới · ${files.filter((f: any) => f.before !== null && f.after !== null).length} sửa · ${files.filter((f: any) => f.after === null).length} xóa</p>${p.data.prefix ? `<p>Bỏ folder bọc ZIP: <code>${esc(p.data.prefix)}</code></p>` : ""}<p>Commit backup source vào ref Git riêng trước khi cập nhật. Giữ venv, dependencies và file ngoài danh sách.</p>${files.map((f: any) => `<div class="changed-file">${icon(f.after === null ? "diff-removed" : f.before === null ? "diff-added" : f.binary ? "file-media" : "file-code")}<span>${esc(f.path)}</span><small>${f.after === null ? "Xóa" : f.binary ? "Binary · " + f.bytes + " B" : ""}</small></div>`).join("")}`;
+    action = `<button data-action="review">${icon("diff")} Xem thay đổi</button><button class="primary" data-action="approve" data-id="${p.id}" ${p.reviewed ? "" : "disabled"}>${icon("check")} Backup và cập nhật</button>`;
+  } else if (p.kind === "changes") {
     title = `${p.data.edits.length} file thay đổi`;
     symbol = "git-compare";
     body = p.data.edits
@@ -167,13 +177,21 @@ function render() {
     document.activeElement === textarea && textarea
       ? { start: textarea.selectionStart, end: textarea.selectionEnd }
       : undefined;
-  app.innerHTML = `<header><div class="header-row"><span class="title" title="${esc(c.title)}">${esc(c.title)}</span>${state.surface === "editor" ? button("new", "add", "Hội thoại mới") + button("history", "history", "Lịch sử") + button("sidebar", "screen-normal", "Về sidebar") : ""}${button("moreMenu", "ellipsis", "Thao tác hội thoại")}</div><div class="status ${state.busy ? "busy" : state.status.includes("kết nối") && !state.status.includes("Chưa") ? "connected" : ""}"><span class="dot"></span><span class="status-text" id="statusText">${esc(state.status)}</span><span class="spacer"></span><span>${c.turns}/20</span></div><div id="headerPopover"></div></header><main>${!c.messages.length && !c.pending ? `<div class="welcome"><div class="welcome-symbol">${icon("comment-discussion")}<span class="spark">${icon("sparkle")}</span></div><h2>Làm việc cùng Nopilot</h2><p>Copilot, ngay trong workspace.<br>Review thay đổi trước khi áp dụng.</p><button class="connect" data-action="connect">${icon("plug")} Kết nối Teams</button><span class="hint">Gõ @ để thêm context · Ctrl+V để dán ảnh</span></div>` : ""}${c.messages.map((m: any) => `<article class="message ${esc(m.role)}"><div class="message-label">${icon(m.role === "user" ? "account" : m.role === "assistant" ? "hubot" : "pulse")}${m.role === "user" ? "Bạn" : m.role === "assistant" ? "Copilot" : "Nopilot"}</div><div class="message-body">${m.role === "assistant" ? assistantMarkup(m.text) : esc(m.text)}</div></article>`).join("")}${c.pending ? pendingCard(c.pending) : ""}${(c.activities ?? []).map(activityCard).join("")}${artifacts(c)}</main><footer>${queueMarkup(c)}${error ? `<div class="error">${icon("error")}<span>${esc(error)}</span>${button("dismissError", "close", "Đóng thông báo")}</div>` : ""}<div class="composer">${voiceMarkup()}<div id="composerPopover"></div><div class="chips">${contextChips(c)}</div><textarea id="prompt" aria-label="Nhắn Copilot" aria-autocomplete="list" aria-controls="nopilot-options" aria-expanded="false" placeholder="Bạn muốn phát triển điều gì?" title="Enter gửi · Shift+Enter xuống dòng · @ context · / lệnh">${esc(c.draft)}</textarea><div class="composer-actions">${button("addMenu", "add", "Thêm file hoặc context")}<div class="mode">${icon(c.mode === "develop" ? "code" : "comment")}<select id="mode" aria-label="Chế độ"><option value="ask" ${c.mode === "ask" ? "selected" : ""}>Ask</option><option value="develop" ${c.mode === "develop" ? "selected" : ""}>Develop</option></select></div>${button("tools", "globe", c.tools ? "Tắt web tools" : "Bật web tools", `aria-pressed="${c.tools}"`, c.tools ? "toggle-on" : "")}${c.files.length ? button("previewContext", "eye", "Xem nội dung context sẽ gửi") : ""}<span class="spacer"></span>${button("voiceToggle", state.voice?.status === "recording" ? "debug-stop" : "mic", state.voice?.status === "recording" ? "Dừng ghi và nhận dạng" : "Nhập giọng nói local", "", state.voice?.status === "recording" ? "recording" : "")}${state.canStop ? button("stop", "debug-stop", "Dừng lệnh local đang chạy", "", "danger") : ""}${state.busy ? button("steer", "arrow-up", "Ưu tiên draft cho lượt kế tiếp · không đổi lượt đang chạy") : ""}${button("send", state.busy ? "add" : "arrow-up", state.busy ? "Thêm vào hàng đợi" : "Gửi tin nhắn", "", "send primary")}</div></div><div class="footer-meta"><span title="${esc(state.root || "Chưa mở workspace")}">${icon("device-desktop")}${state.root ? "Workspace" : "Local"}</span><button data-action="help" title="Hướng dẫn context, duyệt thay đổi và chạy project">${icon("shield")}Duyệt thao tác</button><span class="spacer"></span>${c.attachments.length ? `<span title="Tối đa 3 attachments, mỗi file 1 MiB">${icon("attach")}${c.attachments.length}/3</span>` : ""}</div></footer>${historyOpen ? historyMarkup() : ""}`;
+  app.innerHTML = `<header><div class="header-row"><span class="title" title="${esc(c.title)}">${esc(c.title)}</span>${state.surface === "editor" ? button("new", "add", "Hội thoại mới") + button("history", "history", "Lịch sử") + button("sidebar", "screen-normal", "Về sidebar") : ""}${button("moreMenu", "ellipsis", "Thao tác hội thoại")}</div><div class="status ${state.busy ? "busy" : state.status.includes("kết nối") && !state.status.includes("Chưa") ? "connected" : ""}"><span class="dot"></span><span class="status-text" id="statusText">${esc(state.status)}</span><span class="spacer"></span><span>${c.turns}/20</span></div><div id="headerPopover"></div></header><main>${!c.messages.length && !c.pending ? `<div class="welcome"><div class="welcome-symbol">${icon("comment-discussion")}<span class="spark">${icon("sparkle")}</span></div><h2>Làm việc cùng Nopilot</h2><p>Copilot, ngay trong workspace.<br>Review thay đổi trước khi áp dụng.</p><button class="connect" data-action="connect">${icon("plug")} Kết nối Teams</button><span class="hint">Gõ @ để thêm context · Ctrl+V để dán ảnh</span></div>` : ""}${c.messages.map((m: any) => `<article class="message ${esc(m.role)}"><div class="message-label">${icon(m.role === "user" ? "account" : m.role === "assistant" ? "hubot" : "pulse")}${m.role === "user" ? "Bạn" : m.role === "assistant" ? "Copilot" : "Nopilot"}</div><div class="message-body">${m.role === "assistant" ? assistantMarkup(m.text) : esc(m.text)}</div></article>`).join("")}${c.pending ? pendingCard(c.pending) : ""}${(c.activities ?? []).map(activityCard).join("")}${artifacts(c)}${c.archiveQueue?.length ? `<section class="card"><button data-action="archiveNext">${icon("file-zip")}Chọn ZIP đã stage (${c.archiveQueue.length})</button></section>` : ""}</main><footer>${queueMarkup(c)}${error ? `<div class="error">${icon("error")}<span>${esc(error)}</span>${button("dismissError", "close", "Đóng thông báo")}</div>` : ""}<div class="composer">${voiceMarkup()}<div id="composerPopover"></div><div class="chips">${contextChips(c)}</div><textarea id="prompt" aria-label="Nhắn Copilot" aria-autocomplete="list" aria-controls="nopilot-options" aria-expanded="false" placeholder="Bạn muốn phát triển điều gì?" title="Enter gửi · Shift+Enter xuống dòng · @ context · / lệnh">${esc(c.draft)}</textarea><div class="composer-actions">${button("addMenu", "add", "Thêm file hoặc context")}<div class="mode">${icon(c.mode === "develop" ? "code" : "comment")}<select id="mode" aria-label="Chế độ" title="Develop: sửa project và duyệt chạy. Ask: chỉ hỏi với context, không áp dụng code."><option value="ask" ${c.mode === "ask" ? "selected" : ""}>Chỉ hỏi</option><option value="develop" ${c.mode === "develop" ? "selected" : ""}>Develop</option></select></div>${button("tools", "globe", c.tools ? "Tắt web tools" : "Bật web tools", `aria-pressed="${c.tools}"`, c.tools ? "toggle-on" : "")}${c.files.length ? button("previewContext", "eye", "Xem nội dung context sẽ gửi") : ""}<span class="spacer"></span>${button("voiceToggle", state.voice?.status === "recording" ? "debug-stop" : "mic", state.voice?.status === "recording" ? "Dừng ghi và nhận dạng" : "Nhập giọng nói local", "", state.voice?.status === "recording" ? "recording" : "")}${state.canStop ? button("stop", "debug-stop", "Dừng lệnh local đang chạy", "", "danger") : ""}${state.busy ? button("steer", "arrow-up", "Ưu tiên draft cho lượt kế tiếp · không đổi lượt đang chạy") : ""}${button("send", state.busy ? "add" : "arrow-up", state.busy ? "Thêm vào hàng đợi" : "Gửi tin nhắn", "", "send primary")}</div></div><div class="footer-meta"><span title="${esc(state.root || "Chưa mở workspace")}">${icon("device-desktop")}${state.root ? (c.autoWorkspace && c.mode === "develop" ? "Workspace tự động" : "Context đã chọn") : "Local"}</span><button data-action="help" title="Hướng dẫn context, duyệt thay đổi và chạy project">${icon("shield")}Duyệt thao tác</button><span class="spacer"></span>${c.attachments.length ? `<span title="Tối đa 3 attachments">${icon("attach")}${c.attachments.length}/3</span>` : ""}</div></footer>${historyOpen ? historyMarkup() : ""}`;
   app
     .querySelectorAll<HTMLDetailsElement>("details[data-activity]")
     .forEach((el) =>
       el.addEventListener("toggle", () => {
         if (el.open) expandedActivities.add(el.dataset.activity!);
         else expandedActivities.delete(el.dataset.activity!);
+      }),
+    );
+  app
+    .querySelectorAll<HTMLDetailsElement>("details[data-artifacts]")
+    .forEach((el) =>
+      el.addEventListener("toggle", () => {
+        if (el.open) expandedArtifacts.add(el.dataset.artifacts!);
+        else expandedArtifacts.delete(el.dataset.artifacts!);
       }),
     );
   const main = document.querySelector("main")!;
@@ -214,11 +232,6 @@ function render() {
     event.preventDefault();
     const file = item.getAsFile();
     if (!file) return;
-    if (file.size > 1024 * 1024) {
-      error = "Ảnh vượt 1 MiB. Chọn ảnh nhỏ hơn trước khi gửi.";
-      render();
-      return;
-    }
     const reader = new FileReader();
     reader.onload = () =>
       post("image", { base64: String(reader.result).split(",")[1] });
@@ -383,6 +396,20 @@ function options(): Suggestion[] {
       detail: "Dò lại bridge, không tự gửi lại",
       icon: "refresh",
       action: "connect",
+    },
+    {
+      id: "checkRuntime",
+      label: "Check Runtime",
+      detail: "Kiểm tra Python, dependencies và Microsoft Edge",
+      icon: "pulse",
+      action: "checkRuntime",
+    },
+    {
+      id: "repairRuntime",
+      label: "Repair Bridge Dependencies",
+      detail: "Tạo card duyệt cài thư viện đúng Python bridge",
+      icon: "tools",
+      action: "repairRuntime",
     },
     {
       id: "settings",

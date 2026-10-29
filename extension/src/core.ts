@@ -27,7 +27,7 @@ export async function scanFiles(
   root: string,
   scope: string,
   ig: ReturnType<typeof matcher>,
-  maximum = 2000,
+  maximum = Infinity,
 ) {
   const diff = path.relative(root, scope);
   if (
@@ -145,7 +145,6 @@ export function validateChangeset(
     total += Buffer.byteLength(e.content ?? "");
     seen.add(key);
   }
-  if (total > 2 * 1024 * 1024) throw Error("Changeset exceeds 2 MiB");
   return raw;
 }
 export function validateRun(raw: any): {

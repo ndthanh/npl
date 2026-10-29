@@ -6,6 +6,7 @@ import ctypes
 import datetime
 import io
 import json
+import os
 import pathlib
 import re
 import sys
@@ -62,6 +63,12 @@ def check_path(name):
 
 def dispatch(method, p):
     global browser, pw
+    if method == 'doctor':
+        from doctor import diagnose
+        return diagnose()
+    if method == 'unpack_project':
+        from archives import unpack_project
+        return unpack_project(p['base64'])
     if method == 'connect':
         acquire_lock()
         return {**harness.connect(), 'route':route()}
@@ -76,31 +83,29 @@ def dispatch(method, p):
         return {'route':route()}
     if method == 'ask':
         bridge=connect()
+        from model_selector import select_model,DEFAULT_MODEL
+        model=select_model(bridge,p.get('model',DEFAULT_MODEL))
         for upload in p.get('uploads', []):
             harness.upload(upload)
         reply=bridge.ask(p['prompt'], timeout=p.get('timeout',300))
-        return {**reply, 'route':route(), 'downloads':harness.downloads()}
+        return {**reply, 'route':route(), 'downloads':harness.downloads(),'model':model}
     if method == 'read':
         connect()
         return {**harness.read(),'route':route(),'downloads':harness.downloads()}
     if method == 'download':
         connect()
         return {'base64':base64.b64encode(harness.bridge.read_download(p['name'])).decode('ascii')}
-    if method == 'pack':
+    if method in ('pack','pack_project'):
         out=io.BytesIO()
         with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as archive:
             for entry in p['entries']:
                 check_path(entry['path'])
-                archive.writestr(entry['path'],entry['content'])
-        if len(out.getvalue())>1024*1024:
-            raise ValueError('Packed context exceeds 1 MiB; select fewer files')
+                archive.writestr(entry['path'],base64.b64decode(entry['base64'],validate=True) if method=='pack_project' else entry['content'])
         return {'base64':base64.b64encode(out.getvalue()).decode('ascii')}
     if method == 'unpack':
         raw=base64.b64decode(p['base64'],validate=True)
-        if len(raw)>1024*1024:raise ValueError('Archive exceeds 1 MiB')
         entries=[];total=0;seen=set()
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-            if len(archive.infolist())>2000:raise ValueError('Too many ZIP entries')
             for entry in archive.infolist():
                 if entry.is_dir():continue
                 check_path(entry.orig_filename)
@@ -108,7 +113,6 @@ def dispatch(method, p):
                 key=entry.filename.casefold()
                 if key in seen or ((entry.external_attr>>16)&0o170000)==0o120000:raise ValueError('Duplicate or symlink ZIP entry')
                 seen.add(key);total+=entry.file_size
-                if total>2*1024*1024:raise ValueError('Expanded ZIP exceeds 2 MiB')
                 try:text=archive.read(entry).decode('utf-8-sig')
                 except UnicodeDecodeError:raise ValueError('Only UTF-8 source ZIP entries are supported: '+entry.filename)
                 entries.append({'path':entry.filename,'content':text})
@@ -118,18 +122,28 @@ def dispatch(method, p):
         return fetch_markdown(p['url'])
     if method.startswith('browser.'):
         from web_reader import public_url
-        from playwright.sync_api import sync_playwright
+        try:from playwright.sync_api import sync_playwright
+        except ModuleNotFoundError as error:raise RuntimeError(f'Thiếu Playwright trong Python {sys.executable}. Chạy Nopilot: Repair Bridge Dependencies.') from error
+        if browser is not None and not browser.is_connected():browser=None
+        if browser is not None and not browser.contexts:
+            browser.close();browser=None
         if browser is None:
-            pw=sync_playwright().start()
-            browser=pw.chromium.launch(channel='msedge',headless=False)
-            context=browser.new_context(accept_downloads=False,service_workers='block')
+            try:
+                if pw is None:pw=sync_playwright().start()
+                browser=pw.chromium.launch(channel='msedge',headless=os.environ.get('NOPILOT_BROWSER_HEADLESS')=='1',timeout=20000)
+                context=browser.new_context(accept_downloads=False,service_workers='block')
+            except Exception as error:
+                if browser:
+                    with contextlib.suppress(Exception):browser.close()
+                browser=None
+                raise RuntimeError(f'Không mở được Microsoft Edge qua Playwright ({sys.executable}): {error}. Kiểm tra Edge desktop và Nopilot: Check Runtime. Không cần playwright install khi dùng channel msedge.') from error
             # Guard every request, including redirects and subresources.
             def guard(request_route):
                 try:public_url(request_route.request.url);request_route.continue_()
                 except Exception:request_route.abort()
             context.route('**/*',guard)
             context.new_page()
-        context=browser.contexts[0]
+        context=browser.contexts[0] if browser.contexts else browser.new_context(accept_downloads=False,service_workers='block')
         page=context.pages[0] if context.pages else context.new_page()
         page.set_default_timeout(15000)
         if method=='browser.open':page.goto(public_url(p['url']),wait_until='domcontentloaded',timeout=30000)
@@ -152,7 +166,6 @@ def main():
     for line in sys.stdin:
         request={}
         try:
-            if len(line)>12*1024*1024:raise ValueError('Request too large')
             request=json.loads(line)
             print('RPC start '+str(request.get('id'))+' '+str(request.get('method')),file=sys.stderr,flush=True)
             with contextlib.redirect_stdout(sys.stderr):
@@ -163,7 +176,8 @@ def main():
             response={'id':request.get('id'),'error':str(error)}
         print(json.dumps(response,ensure_ascii=True),flush=True)
         print('RPC finished '+str(request.get('id')),file=sys.stderr,flush=True)
-    if browser:browser.close()
+    if browser:
+        with contextlib.suppress(Exception):browser.close()
     if pw:pw.stop()
     harness.close()
     release_lock()

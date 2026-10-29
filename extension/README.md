@@ -1,10 +1,33 @@
 # Nopilot for VS Code
 
+## Bản 0.2.2
+
+- Đã bỏ hard limit dung lượng source, ZIP, file upload/download và số file do harness đặt. Tối đa **3 attachments/lượt** vẫn áp dụng. Copilot có thể từ chối upload theo giới hạn phía dịch vụ; Nopilot báo lỗi thực tế, không tự resend. `.nopilotignore` vẫn dùng để chọn source phù hợp.
+- Truyền file qua Frida theo từng khối 192 KiB, thời gian chờ tính cả upload. 192 KiB là kích thước khối truyền, không phải giới hạn file.
+- Artifacts mặc định thu gọn. Mở danh sách có vùng cuộn tối đa 220 px, giữ trạng thái mở khi output cập nhật; nút chạy project nằm riêng.
+- `web.read` dùng `truststore` nếu có; nếu thiếu tự dùng SSL context mặc định Python/Windows với xác minh HTTPS bật. Không cần cài truststore chỉ để đọc web. BeautifulSoup/markdownify vẫn là dependencies bắt buộc.
+- Trước upload/gửi prompt, bridge chọn và xác minh **GPT-5.6 Sol Think deeper**, kể cả khi Teams đang Auto. Không xác minh được thì dừng trước gửi. Đổi nhãn chính xác tại `nopilot.copilotModel`; để trống nếu muốn tự chọn model trong Teams.
+- Kèm manifest WebView2 đã kiểm tra cho 155.0.4283.62 và 156.0.4314.50; chỉ nạp offsets khi hash DLL khớp.
+
+## Bản 0.2.1 — ZIP vào workspace
+
+Hội thoại mới mặc định **Develop** và tự lấy source workspace theo `.nopilotignore`; folder rỗng có thể yêu cầu tạo project ngay. Source hiện tại được tự ZIP thành TXT để upload, tối đa 3 attachments/lượt. Chọn `@file` hoặc `@folder` để thu hẹp context. Với workspace nhiều folder, chọn folder đích khi gửi lượt đầu.
+
+Khi nhận ZIP: tải vào artifacts → giải nén staging → card **Xem thay đổi** → **Backup và cập nhật**. Backup là commit chứa source thật tại `refs/nopilot/backups/<revision>` trong Git repository; không thay HEAD hoặc index người dùng. Workspace chưa có Git sẽ được khởi tạo sau khi duyệt. File text/binary được thêm hoặc ghi đè trực tiếp trong workspace; file vắng trong ZIP vẫn giữ nguyên. `.venv`, dependencies và đường dẫn ignore được bảo vệ. Các hard limit dung lượng/số file này đã được bỏ ở 0.2.2.
+
+Để xóa file, ZIP cần `nopilot-delivery.json` ở root với `schemaVersion: 1`, `baseContextId` đúng lượt yêu cầu, `projectRoot: "."`, `commitMessage` và `deletePaths`. Nopilot tự hướng dẫn Copilot contract này. Folder bọc ZIP chỉ tự bỏ nếu toàn bộ entry cùng folder và có `nopilot.json` hoặc delivery manifest ở đó.
+
+Sau cập nhật, chọn **Chạy dự án** hoặc kiểm tra để xem và duyệt lệnh theo `nopilot.json`. Venv được tái sử dụng. Lượt prompt tiếp theo lấy source mới nhất, kể cả sửa tay đã lưu. Nếu cập nhật gián đoạn, nhật ký và backup được giữ; không tự chạy lại. Dùng **Khôi phục checkpoint**; file đã sửa tiếp sẽ chặn restore tự động.
+
+**Develop** nhận đề xuất sửa source/ZIP/chạy lệnh, luôn cần duyệt. **Chỉ hỏi (Ask)** dùng context VS Code để giải thích/review nhưng không nhận đề xuất áp dụng code hoặc chạy lệnh; vẫn có thể dùng web tools nếu bật. Ask là lựa chọn phụ; hội thoại cũ giữ chế độ đã chọn.
+
+Nếu gặp lỗi thiếu `truststore` hoặc không mở được Playwright, mở menu `…` → **Check Runtime** để xem đúng Python, dependencies và Edge. **Repair Bridge Dependencies** tạo card duyệt cài `bridge/requirements.txt` vào Python đã cấu hình. Sau cài, reload VS Code. Playwright dùng Edge đã cài (`channel=msedge`), không cần tải Chromium riêng. Thiếu `truststore` chỉ chặn HTML reader, không còn chặn module browser tools.
+
 Chat với Teams Copilot qua Frida ngay cạnh editor. Windows desktop/local workspace; không dùng CDP, không cần PowerShell. UI lấy màu từ VS Code theme.
 
 ## Cài và mở
 
-1. Cài VSIX bằng `Extensions: Install from VSIX…` hoặc CMD: `code --install-extension nopilot-0.2.0.vsix`.
+1. Cài VSIX bằng `Extensions: Install from VSIX…` hoặc CMD: `code --install-extension nopilot-0.2.2.vsix`.
 2. Chuẩn bị Python riêng bằng CMD:
 
    ```cmd
@@ -27,7 +50,7 @@ Bridge kiểm tra SHA-256 WebView2 trước native calls. Nếu Teams/Edge WebVi
 - **Xem context** mở nội dung thực sự chuẩn bị gửi. Buffer đang sửa được thu vào snapshot; không tự lưu source chỉ vì gửi context. Apply bị chặn nếu file chưa lưu hoặc đã đổi so với base.
 - `.nopilotignore` dùng quy tắc gitignore. Không tự đọc `.gitignore`. `.git`, `.vscode`, venv, dependencies, outputs và secret phổ biến luôn bị loại mặc định; negation trong ignore không mở lại các mặc định bảo vệ này. `.vscode` được bảo vệ để source do model trả về không thay cấu hình bridge/runtime.
 - Workspace context là một snapshot. Sau khi bạn tự sửa source, thêm lại context cần thiết trước lượt gửi tiếp. Sau apply của Nopilot, context source được cập nhật.
-- Context nhỏ gửi inline. Context dài tự zip snapshot, đổi đuôi `.txt`, đính kèm cùng giải thích đây là ZIP bytes. Không cần tự nén. Hiện giới hạn 2 MiB context UTF-8, 2.000 file và 1 MiB/archive; chọn scope nhỏ hơn nếu vượt.
+- Context nhỏ gửi inline. Context dài tự zip snapshot, đổi đuôi `.txt`, đính kèm cùng giải thích đây là ZIP bytes. Không cần tự nén. Không còn hard limit dung lượng/số file do harness đặt; dùng ignore hoặc scope để kiểm soát context gửi đi.
 
 Composer dùng Codicons như VS Code. Nút `＋` mở menu thêm file. Các thao tác phụ nằm trong `…`; các quyết định duyệt code/chạy lệnh vẫn có nhãn rõ ràng. Màu sắc theo theme VS Code.
 
@@ -38,10 +61,10 @@ Enter gửi; Shift+Enter xuống dòng. Gõ `/` để xem/lọc slash commands, 
 - `＋` → Đính kèm file chọn bằng dialog native VS Code, sao vào draft artifacts; chưa upload Teams tới khi gửi.
 - `/up` + Tab hoàn thành `/upload`, mở dialog. Chọn xong **chỉ điền đường dẫn**, không tự gửi. Nhấn Enter để đưa file vào draft; sau đó nhập prompt và gửi.
 - Hoặc `/upload "C:\absolute\project-log.txt"`.
-- Ctrl+V ảnh trong composer tạo preview attachment; PNG/JPEG tối đa 1 MiB. Ảnh quá lớn báo lỗi, chưa có tự giảm kích thước. Nếu paste từ app nguồn không cung cấp image item, chọn file bằng dialog.
+- Ctrl+V ảnh trong composer tạo preview attachment; PNG/JPEG được giữ nguyên dung lượng, chưa có tự giảm kích thước. Ảnh lớn hiển thị chip thay preview để giữ giao diện nhẹ. Nếu paste từ app nguồn không cung cấp image item, chọn file bằng dialog.
 - Tối đa 3 attachments cho một lượt, gồm cả context bundle và ảnh. Context dài cần chừa một slot.
 - File Copilot trả về được lưu dưới storage/artifacts theo conversation, có Mở và Folder. Không phụ thuộc animation download của Teams: bridge đọc nội dung qua link của response trong ngữ cảnh WebView rồi chuyển bytes về local.
-- ZIP fallback hiện chỉ nhận các entry source UTF-8, tối đa 1 MiB ZIP/2 MiB giải nén. ZIP có binary assets sẽ báo lỗi rõ ràng, không âm thầm bỏ assets. ZIP thiếu file không tự xóa file workspace.
+- ZIP project hỗ trợ source và binary assets; đi qua staging/review/Git backup như phần bản 0.2.1 ở trên. ZIP thiếu file không tự xóa file workspace.
 
 ## Vòng phát triển
 

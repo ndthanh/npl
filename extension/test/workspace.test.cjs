@@ -388,6 +388,94 @@ test("turn budget pauses before running tools and consumed tool IDs cannot repea
   await assert.rejects(() => app.runTool(p), /không chạy lặp/);
   assert.equal(calls, 0);
 });
+test("ZIP response stages a review card, applies after review, and accepts changed ZIP bytes under the same name", async () => {
+  const c = await base();
+  c.workspaceBase = await require("../dist/archive.js").workspaceSnapshot(
+    root,
+    require("../dist/core.js").matcher(),
+  );
+  let revision = 1;
+  app.bridge.call = async (method) => {
+    if (method === "download")
+      return {
+        base64: Buffer.from("zip fixture " + revision).toString("base64"),
+      };
+    if (method === "unpack_project")
+      return {
+        entries: [
+          {
+            path: "main.py",
+            base64: Buffer.from("zip update " + revision).toString("base64"),
+          },
+        ],
+      };
+    throw Error("Unexpected " + method);
+  };
+  const reply = { downloads: [{ name: "project.zip" }] };
+  await app.acceptResponse(reply);
+  assert.equal(c.pending.kind, "archive");
+  assert.equal(
+    await fs.readFile(path.join(root, "main.py"), "utf8"),
+    'print("old")\n',
+  );
+  const pending = c.pending;
+  await assert.rejects(() => app.applyProjectArchive(pending), /Xem thay đổi/);
+  await app.review();
+  await app.applyProjectArchive(pending);
+  assert.equal(
+    await fs.readFile(path.join(root, "main.py"), "utf8"),
+    "zip update 1",
+  );
+  assert(c.checkpoint.archivePlan.backup.commit);
+  assert.equal(c.autoWorkspace, true);
+  const count = c.artifacts.length;
+  await app.acceptResponse(reply);
+  assert.equal(c.artifacts.length, count);
+  revision = 2;
+  c.workspaceBase = await require("../dist/archive.js").workspaceSnapshot(
+    root,
+    require("../dist/core.js").matcher(),
+  );
+  await app.acceptResponse(reply);
+  assert.equal(c.artifacts.length, count + 1);
+  assert.equal(c.pending.kind, "archive");
+  assert.equal(c.pending.data.files[0].before, sha("zip update 1"));
+  c.pending.status = "rejected";
+});
+test("Develop automatically bundles fresh workspace source without requiring @workspace", async () => {
+  await app.newConversation();
+  const c = app.current();
+  assert.equal(c.mode, "develop");
+  assert.equal(c.autoWorkspace, true);
+  await fs.writeFile(path.join(root, "main.py"), "fresh source");
+  const calls = [];
+  app.bridge.call = async (method, params) => {
+    calls.push({ method, params });
+    if (method === "pack_project")
+      return { base64: Buffer.from("packed fixture").toString("base64") };
+    if (method === "status") return { connected: true, route: "/chat" };
+    if (method === "new") return {};
+    if (method === "ask")
+      return { route: "/chat/conversation/fixture", answer: "ok" };
+    throw Error("Unexpected " + method);
+  };
+  await app.send("Please update the project");
+  const pack = calls.find((c) => c.method === "pack_project");
+  assert(pack);
+  assert.equal(
+    Buffer.from(
+      pack.params.entries.find((e) => e.path === "main.py").base64,
+      "base64",
+    ).toString(),
+    "fresh source",
+  );
+  assert(!pack.params.entries.some((e) => e.path.includes(".venv")));
+  assert.equal(calls.filter((c) => c.method === "ask").length, 1);
+  assert.match(
+    calls.find((c) => c.method === "ask").params.prompt,
+    /nopilot-delivery.json/,
+  );
+});
 test("different workspaces persist to separate stores without overwriting legacy history", async () => {
   await app.persist();
   const originalHistory = await fs.readFile(

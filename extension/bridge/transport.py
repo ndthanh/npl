@@ -100,7 +100,7 @@ class Harness:
                 time.sleep(.5)
             raise RuntimeError('Could not restore the selected chat through Copilot history; open it in Teams and reconnect. No prompt was sent')
 
-    def upload(self,path,timeout=90):
+    def upload(self,path,timeout=300):
             path=pathlib.Path(path)
             mime=mimetypes.guess_type(path.name)[0] or 'application/octet-stream'
             result=self.bridge.attach_file(path,mime=mime)
@@ -110,7 +110,7 @@ class Harness:
             self.record('upload-finished',**ready)
             return ready
 
-    def wait_upload(self,name,timeout=90):
+    def wait_upload(self,name,timeout=300):
             deadline=time.monotonic()+timeout
             stable=0
             while time.monotonic()<deadline:

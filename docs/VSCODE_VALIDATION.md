@@ -1,5 +1,17 @@
 # Nopilot extension — kiểm chứng triển khai
 
+## Bản 0.2.2 — 29/10/2026
+
+- TypeScript check qua; **57/57 Node**, **11/11 Python** qua.
+- Bỏ các hard limit dung lượng source/ZIP/attachment/download và số file của harness. Giữ tối đa 3 attachments/lượt. Truyền file Frida theo khối 192 KiB.
+- Kiểm chứng Frida thật: Auto → GPT-5.6 Sol Think deeper → xác minh model; không gửi prompt. Manifest WebView2 156.0.4314.50 được lấy từ public PDB khớp hash; vẫn kèm manifest 155.0.4283.62.
+- Frida attach_file → File input giả local → Blob → read_download: **3.145.728 bytes**, SHA-256 khớp. Đây là kiểm thử transfer thật với dữ liệu tổng hợp, không phải upload server Copilot hoặc model tạo file.
+- `web.read` gọi HTTPS example.com khi import truststore được cố ý chặn: thành công bằng SSL context mặc định, vẫn xác minh certificate/hostname.
+- Render bundle thật với 100 artifacts: mặc định thu gọn dưới 70 px, danh sách mở có vùng cuộn 220 px, không lỗi JS/tràn ngang ở 320 px. Đã xem ảnh render; không phải ảnh Extension Host.
+- VSIX `nopilot-0.2.2.vsix` đóng gói thành công. Evidence ngoài repo: `large-transfer-model.json`, `upload-chunk-roundtrip.json`, `web-no-truststore.json`, `artifacts-collapsed-420.png`, `artifacts-expanded-420.png`.
+
+Phần dưới lưu kết quả của đợt triển khai 0.2.0; giới hạn ZIP UTF-8/dung lượng được mô tả ở đó đã thay đổi trong 0.2.1/0.2.2.
+
 Cập nhật 29/10/2026, nhánh `feat/vscode-extension`. Hướng dẫn sử dụng hiện hành: [extension/README.md](../extension/README.md). `VSCODE_DESIGN.md` lưu đề xuất thiết kế ban đầu; các khả năng dự kiến trong đó không mặc nhiên là đã hoàn thành.
 
 ## Đã triển khai

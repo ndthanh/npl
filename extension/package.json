@@ -2,7 +2,7 @@
   "name": "nopilot",
   "displayName": "Nopilot",
   "description": "Teams Copilot beside your editor, through a local Frida bridge.",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "publisher": "ndthanh",
   "license": "MIT",
   "engines": {
@@ -91,6 +91,14 @@
       {
         "command": "nopilot.configureVoice",
         "title": "Nopilot: Configure Local Voice Model"
+      },
+      {
+        "command": "nopilot.checkRuntime",
+        "title": "Nopilot: Check Runtime"
+      },
+      {
+        "command": "nopilot.repairRuntime",
+        "title": "Nopilot: Repair Bridge Dependencies"
       }
     ],
     "menus": {
@@ -172,6 +180,11 @@
           "type": "number",
           "default": -1,
           "description": "PortAudio input device ID; -1 uses the default microphone."
+        },
+        "nopilot.copilotModel": {
+          "type": "string",
+          "default": "GPT-5.6 Sol Think deeper",
+          "description": "Exact Copilot menu label. Verified before uploading/sending. Empty disables model selection."
         }
       }
     }

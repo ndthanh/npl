@@ -20,8 +20,10 @@ export class Sidecar {
   ) {}
   async call(method: string, params: any = {}): Promise<any> {
     if (!this.process) {
+      const python = this.python();
+      let diagnostics = "";
       const proc = spawn(
-        this.python(),
+        python,
         ["-u", "-B", path.join(this.directory, "rpc.py")],
         { windowsHide: true, env: { ...process.env, PYTHONUTF8: "1" } },
       );
@@ -44,7 +46,10 @@ export class Sidecar {
           this.log("Protocol error: " + String(e));
         }
       });
-      proc.stderr.on("data", (d) => this.log(d.toString()));
+      proc.stderr.on("data", (d) => {
+        this.log(d.toString());
+        diagnostics = (diagnostics + d.toString()).slice(-16000);
+      });
       const fail = (e: Error) => {
         if (this.process === proc) this.process = undefined;
         for (const p of this.pending.values()) {
@@ -54,24 +59,46 @@ export class Sidecar {
         this.pending.clear();
       };
       proc.on("error", fail);
-      proc.on("exit", (code) =>
-        fail(Error("Bridge exited (" + code + "). Nothing was resent.")),
+      proc.on("close", (code) =>
+        fail(
+          Error(
+            (/No module named ['"]([^'"]+)/.exec(diagnostics)?.[1]
+              ? "Python " +
+                python +
+                " thiếu " +
+                /No module named ['"]([^'"]+)/.exec(diagnostics)![1] +
+                ". Chạy Nopilot: Check Runtime / Repair Bridge Dependencies. "
+              : "") +
+              "Bridge exited (" +
+              code +
+              "). Nothing was resent.",
+          ),
+        ),
       );
     }
     const id = randomUUID();
     this.log("RPC request " + method + " " + id);
     return new Promise((resolve, reject) => {
       const seconds =
-        params.timeout ??
-        (method === "ask"
-          ? 300
-          : ["connect", "new", "restore"].includes(method)
-            ? 60
-            : method.startsWith("browser.")
+        (params.timeout ??
+          (method === "ask"
+            ? 300
+            : ["connect", "new", "restore"].includes(method)
               ? 60
-              : method === "web.read"
-                ? 45
-                : 30);
+              : method.startsWith("browser.")
+                ? 60
+                : method === "web.read"
+                  ? 45
+                  : [
+                        "download",
+                        "pack",
+                        "pack_project",
+                        "unpack",
+                        "unpack_project",
+                      ].includes(method)
+                    ? 300
+                    : 30)) +
+        (method === "ask" ? (params.uploads?.length ?? 0) * 300 : 0);
       const timer = setTimeout(
         () => {
           this.pending.delete(id);

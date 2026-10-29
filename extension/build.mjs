@@ -58,4 +58,17 @@ await build({
   outfile: "dist/queue.js",
 });
 await import("./scripts/notices.mjs");
-await build({entryPoints:["src/voice.ts"],bundle:true,platform:"node",format:"cjs",outfile:"dist/voice.js"});
+await build({
+  entryPoints: ["src/archive.ts"],
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  outfile: "dist/archive.js",
+});
+await build({
+  entryPoints: ["src/voice.ts"],
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  outfile: "dist/voice.js",
+});

@@ -11,12 +11,9 @@ import socket
 import queue
 import threading
 import ssl
-import truststore
 import urllib.error
 import urllib.parse
 import urllib.request
-from bs4 import BeautifulSoup
-from markdownify import markdownify
 
 class URLContextError(ValueError):pass
 
@@ -48,19 +45,32 @@ class Redirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,request,fp,code,message,headers,newurl):
         return super().redirect_request(request,fp,code,message,headers,public_url(newurl))
 
-def fetch_markdown(url,*,timeout=20,max_html_bytes=2*1024*1024):
+def fetch_markdown(url,*,timeout=20,max_html_bytes=None):
+    try:
+        from bs4 import BeautifulSoup
+        from markdownify import markdownify
+    except ModuleNotFoundError as error:
+        import sys
+        raise URLContextError(f'Thiếu {error.name} trong Python {sys.executable}. Chạy Nopilot: Repair Bridge Dependencies.') from error
+    try:
+        import truststore
+        tls=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        tls_source='truststore system certificates'
+    except ImportError:
+        tls=ssl.create_default_context()
+        tls_source='Python default certificates (Windows ROOT/CA on Windows)'
     url=public_url(url)
     # Use the OS certificate trust store, matching enterprise browser trust.
     # Certificate verification remains enabled.
-    opener=urllib.request.build_opener(Redirects(),urllib.request.HTTPSHandler(context=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)))
+    opener=urllib.request.build_opener(Redirects(),urllib.request.HTTPSHandler(context=tls))
     request=urllib.request.Request(url,headers={'User-Agent':'nopilot/0.1 (local HTML context reader)','Accept':'text/html,application/xhtml+xml,text/plain,text/markdown','Accept-Encoding':'identity'})
     try:
         with opener.open(request,timeout=timeout) as response:
             final_url=public_url(response.geturl());mime=response.headers.get_content_type()
             if mime not in ('text/html','application/xhtml+xml','text/plain','text/markdown'):
                 raise URLContextError('URL is not readable HTML/text: '+mime)
-            raw=response.read(max_html_bytes+1)
-            if len(raw)>max_html_bytes:raise URLContextError('HTML response exceeds 2 MiB; no truncated page was sent')
+            raw=response.read() if max_html_bytes is None else response.read(max_html_bytes+1)
+            if max_html_bytes is not None and len(raw)>max_html_bytes:raise URLContextError('HTML response exceeds the explicitly requested read limit')
             encoding=response.headers.get_content_charset()
     except urllib.error.HTTPError as error:
         raise URLContextError(f'Website returned HTTP {error.code}; no attempt was made to bypass login or bot verification') from error
@@ -89,7 +99,6 @@ def fetch_markdown(url,*,timeout=20,max_html_bytes=2*1024*1024):
     receipt=secrets.token_hex(12);fetched=datetime.datetime.now(datetime.timezone.utc).isoformat()
     document=f'# {title}\n\nSource URL: {final_url}\nFetched UTC: {fetched}\nContext receipt: {receipt}\n\n---\n\n{text}\n'
     data=document.encode('utf-8')
-    if len(data)>1024*1024:raise URLContextError('Converted Markdown exceeds the current 1 MiB attachment limit')
     return {'url':url,'finalUrl':final_url,'title':title,'fetchedAt':fetched,'receipt':receipt,
             'markdown':document,'characters':len(document),'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest(),
-            'reader':'urllib + BeautifulSoup + markdownify; no JavaScript execution'}
+            'reader':'urllib + BeautifulSoup + markdownify; no JavaScript execution','tlsTrust':tls_source}

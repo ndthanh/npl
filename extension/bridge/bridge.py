@@ -87,6 +87,8 @@ class Bridge:
             module_path = probe.exports_sync.path()
             probe.unload()
             digest = hashlib.sha256(pathlib.Path(module_path).read_bytes()).hexdigest()
+            cached=HERE/'builds'/(digest+'.json')
+            if digest != manifest['moduleSha256'] and cached.is_file():manifest=json.loads(cached.read_text())
             if digest != manifest['moduleSha256']:
                 raise RuntimeError('WebView2 build changed. Regenerate the symbol manifest before attaching native calls.')
             source = (HERE / 'agent.js').read_text().replace('__CONFIG__', json.dumps(manifest))
@@ -183,57 +185,53 @@ return {inserted:true,method:'Lexical.setEditorState'};
 })()'''.replace('__PAYLOAD__', json.dumps(payload)).replace('__DRAFT_TEXT__',DRAFT_TEXT_JS))
 
     def attach_file(self, path, mime='text/plain'):
-        path = pathlib.Path(path)
-        data = path.read_bytes()
-        if len(data) > 1024 * 1024:
-            raise ValueError('PoC attachment bridge is limited to 1 MiB')
-        payload = {'name': path.name, 'mime': mime, 'base64': base64.b64encode(data).decode('ascii')}
-        return self.evaluate(r'''(() => {
-const p=__PAYLOAD__, input=document.querySelector('input[type="file"]#upload-file-button');
-if(!input || input.disabled)return {error:'Upload input unavailable'};
+        path=pathlib.Path(path);key='__nopilot_upload_'+uuid.uuid4().hex
+        payload={'name':path.name,'mime':mime,'key':key}
+        ready=self.evaluate(r"""(() => {
+const p=__PAYLOAD__,input=document.querySelector('input[type="file"]#upload-file-button');
+if(!input||input.disabled)return {error:'Upload input unavailable'};
 const attachments=Array.from(document.querySelectorAll('button[aria-label^="Remove attachment "]')).filter(e=>e.getClientRects().length);
 if(attachments.length>=3)return {error:'Attachment limit reached (3 files)'};
 if(attachments.some(e=>e.getAttribute('aria-label')==='Remove attachment '+p.name))return {error:'This filename is already attached'};
-const data=Uint8Array.from(atob(p.base64),c=>c.charCodeAt(0));
-const transfer=new DataTransfer();
-transfer.items.add(new File([data],p.name,{type:p.mime}));
-input.files=transfer.files;
-input.dispatchEvent(new Event('change',{bubbles:true}));
-return {dispatched:true,name:p.name,bytes:data.length};
-})()'''.replace('__PAYLOAD__', json.dumps(payload)).replace('__DRAFT_TEXT__',DRAFT_TEXT_JS))
+window[p.key]={parts:[],bytes:0};return {ready:true};})()""".replace('__PAYLOAD__',json.dumps(payload)))
+        if not ready or not ready.get('ready'):return ready
+        try:
+            with path.open('rb') as source:
+                while chunk:=source.read(192*1024):
+                    result=self.evaluate(r"""(()=>{const p=__PAYLOAD__,s=window[p.key];if(!s)return {error:'Upload session lost'};const bytes=Uint8Array.from(atob(p.data),c=>c.charCodeAt(0));s.parts.push(bytes);s.bytes+=bytes.length;return {bytes:s.bytes};})()""".replace('__PAYLOAD__',json.dumps({'key':key,'data':base64.b64encode(chunk).decode('ascii')})))
+                    if not result or result.get('error'):raise RuntimeError('Upload chunk failed: '+str(result))
+            return self.evaluate(r"""(()=>{const p=__PAYLOAD__,s=window[p.key],input=document.querySelector('input[type="file"]#upload-file-button');if(!s||!input||input.disabled)return {error:'Upload input/session changed'};const transfer=new DataTransfer();transfer.items.add(new File(s.parts,p.name,{type:p.mime}));input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));return {dispatched:true,name:p.name,bytes:s.bytes};})()""".replace('__PAYLOAD__',json.dumps(payload)))
+        finally:
+            self.evaluate('delete window['+json.dumps(key)+']')
 
-    def read_download(self, name, timeout=30):
+    def read_download(self, name, timeout=120):
         key='__frida_download_'+uuid.uuid4().hex
         payload=json.dumps({'name':name,'key':key})
-        started=self.evaluate(r'''(() => {
+        started=self.evaluate(r"""(() => {
 const p=__PAYLOAD__;
 const turn=Array.from(document.querySelectorAll('[data-testid="m365-chat-llm-web-ui-chat-message"]')).at(-1);
 const link=Array.from(turn?.querySelectorAll('a')||[]).find(e=>e.download===p.name);
 if(!link)return {error:'Named download link missing from latest turn'};
 if(!/^(blob:|data:|https:)/.test(link.href))return {error:'Unsupported download URL scheme'};
 window[p.key]={status:'pending'};
-(async()=>{try{
- const response=await fetch(link.href);
- if(!response.ok)throw new Error('Download HTTP '+response.status);
- const blob=await response.blob();
- if(blob.size>1024*1024)throw new Error('PoC downloads are limited to 1 MiB');
- const bytes=new Uint8Array(await blob.arrayBuffer());
- let binary='';for(const value of bytes)binary+=String.fromCharCode(value);
- window[p.key]={status:'done',base64:btoa(binary),bytes:bytes.length,mime:blob.type};
-}catch(error){window[p.key]={status:'error',error:String(error)};}})();
-return {started:true};
-})()'''.replace('__PAYLOAD__',payload))
-        if not started or not started.get('started'):
-            raise RuntimeError(f'Cannot read download: {started}')
-        deadline=time.monotonic()+timeout
-        while time.monotonic()<deadline:
-            result=self.evaluate('window['+json.dumps(key)+']')
-            if result and result.get('status') in ('done','error'):
-                self.evaluate('delete window['+json.dumps(key)+']')
-                if result['status']=='error':raise RuntimeError(result['error'])
-                return base64.b64decode(result['base64'],validate=True)
-            time.sleep(.5)
-        raise TimeoutError('Download fetch timed out')
+(async()=>{try{const response=await fetch(link.href);if(!response.ok)throw new Error('Download HTTP '+response.status);const blob=await response.blob();window[p.key]={status:'done',data:new Uint8Array(await blob.arrayBuffer()),bytes:blob.size,mime:blob.type};}catch(error){window[p.key]={status:'error',error:String(error)};}})();
+return {started:true};})()""".replace('__PAYLOAD__',payload))
+        if not started or not started.get('started'):raise RuntimeError(f'Cannot read download: {started}')
+        try:
+            deadline=time.monotonic()+timeout
+            while time.monotonic()<deadline:
+                result=self.evaluate('(()=>{const s=window['+json.dumps(key)+'];return s?{status:s.status,bytes:s.bytes,error:s.error}:null;})()')
+                if result and result.get('status')=='error':raise RuntimeError(result['error'])
+                if result and result.get('status')=='done':
+                    output=bytearray()
+                    for offset in range(0,result['bytes'],192*1024):
+                        encoded=self.evaluate(r"""(()=>{const p=__PAYLOAD__,s=window[p.key];if(!s||s.status!=='done')throw Error('Download session lost');const bytes=s.data.subarray(p.offset,p.offset+196608);let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(binary);})()""".replace('__PAYLOAD__',json.dumps({'key':key,'offset':offset})))
+                        output.extend(base64.b64decode(encoded,validate=True))
+                    if len(output)!=result['bytes']:raise RuntimeError('Download byte count mismatch')
+                    return bytes(output)
+                time.sleep(.5)
+            raise TimeoutError('Download fetch timed out')
+        finally:self.evaluate('delete window['+json.dumps(key)+']')
 
     def ask(self, prompt, timeout=180, resume_draft=False):
         state = self.state()

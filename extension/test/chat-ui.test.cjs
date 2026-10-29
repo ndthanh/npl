@@ -163,6 +163,56 @@ test("both trigger prefixes share context and command choices", () => {
     ui.dom.window.close();
   }
 });
+test("many artifacts start collapsed, can expand, and retain expansion through live updates", () => {
+  const conversation = {
+    id: "conversation",
+    title: "Artifacts",
+    draft: "",
+    messages: [{ role: "assistant", text: "Chat remains readable" }],
+    files: [],
+    attachments: [],
+    artifacts: Array.from({ length: 100 }, (_, i) => ({
+      id: String(i),
+      name: "artifact-" + i + ".txt",
+      bytes: 1024,
+    })),
+    mode: "develop",
+    tools: false,
+    turns: 0,
+  };
+  const ui = setup({ conversation });
+  try {
+    const card = ui.w.document.querySelector("details.artifacts-card");
+    assert(card);
+    assert.equal(card.open, false);
+    assert.match(card.querySelector("summary").textContent, /100/);
+    assert(ui.w.document.querySelector(".message-body"));
+    card.open = true;
+    card.dispatchEvent(new ui.w.Event("toggle"));
+    ui.w.dispatchEvent(
+      new ui.w.MessageEvent("message", {
+        data: {
+          type: "event",
+          conversationId: "conversation",
+          event: {
+            type: "CUSTOM",
+            name: "nopilot.activity",
+            value: {
+              id: "output",
+              title: "Tool output",
+              status: "completed",
+              output: "done",
+            },
+          },
+        },
+      }),
+    );
+    assert(ui.w.document.querySelector("details.artifacts-card").open);
+    assert(ui.w.document.querySelector(".artifact-list"));
+  } finally {
+    ui.dom.window.close();
+  }
+});
 test("busy composer submits to queue and exposes explicit next-turn priority", () => {
   const ui = setup({ busy: true });
   try {

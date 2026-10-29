@@ -89,6 +89,8 @@ def main():
     config.update(moduleSha256=hashlib.sha256(module.read_bytes()).hexdigest(),architecture='x64',runtimeVersion=module.parents[2].name,symbolServer='https://msdl.microsoft.com/download/symbols/',pdb=[name,key])
     target=HERE/'build.json'
     target.write_text(json.dumps(config,indent=2),encoding='utf-8')
+    builds=HERE/'builds';builds.mkdir(exist_ok=True)
+    (builds/(config['moduleSha256']+'.json')).write_text(json.dumps(config,indent=2),encoding='utf-8')
     print('Saved',target)
     print(json.dumps(config,indent=2))
 

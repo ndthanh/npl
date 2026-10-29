@@ -14,3 +14,4 @@ dist/gateway.js
 dist/autocomplete.js
 dist/queue.js
 dist/voice.js
+dist/archive.js
