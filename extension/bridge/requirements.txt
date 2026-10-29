@@ -1,0 +1,5 @@
+frida==17.24.3
+beautifulsoup4>=4.13,<5
+markdownify>=1.2,<2
+playwright>=1.51,<2
+truststore>=0.10,<1

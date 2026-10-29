@@ -1,0 +1,206 @@
+{
+  "name": "nopilot",
+  "displayName": "Nopilot",
+  "description": "Teams Copilot beside your editor, through a local Frida bridge.",
+  "version": "0.2.0",
+  "publisher": "ndthanh",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ndthanh/nopilot.git"
+  },
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onView:nopilot.chat"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Chat transport, workspace context, web tools and execution require a trusted local workspace."
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nopilot",
+          "title": "Nopilot",
+          "icon": "media/nopilot.svg"
+        }
+      ]
+    },
+    "views": {
+      "nopilot": [
+        {
+          "type": "webview",
+          "id": "nopilot.chat",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "nopilot.open",
+        "title": "Nopilot: Open Chat"
+      },
+      {
+        "command": "nopilot.expand",
+        "title": "Nopilot: Open Chat in Editor",
+        "icon": "$(screen-full)"
+      },
+      {
+        "command": "nopilot.history",
+        "title": "Nopilot: Conversation History",
+        "icon": "$(history)"
+      },
+      {
+        "command": "nopilot.new",
+        "title": "Nopilot: New Conversation",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nopilot.addSelection",
+        "title": "Nopilot: Add Selection to Chat"
+      },
+      {
+        "command": "nopilot.connect",
+        "title": "Nopilot: Connect to Teams"
+      },
+      {
+        "command": "nopilot.gatewayInfo",
+        "title": "Nopilot: Copy Local Agent Gateway Connection"
+      },
+      {
+        "command": "nopilot.modelKey",
+        "title": "Nopilot: Set Small Model API Key"
+      },
+      {
+        "command": "nopilot.help",
+        "title": "Nopilot: Open Guide"
+      },
+      {
+        "command": "nopilot.configureVoice",
+        "title": "Nopilot: Configure Local Voice Model"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "nopilot.new",
+          "when": "view == nopilot.chat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "nopilot.history",
+          "when": "view == nopilot.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "nopilot.expand",
+          "when": "view == nopilot.chat",
+          "group": "navigation@3"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "nopilot.addSelection",
+          "when": "editorHasSelection",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Nopilot",
+      "properties": {
+        "nopilot.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Absolute Python executable with bridge requirements installed. No PowerShell is used."
+        },
+        "nopilot.responseTimeout": {
+          "type": "number",
+          "default": 300,
+          "minimum": 30,
+          "maximum": 900
+        },
+        "nopilot.gateway.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Authenticated loopback agent API; token is stored in SecretStorage."
+        },
+        "nopilot.gateway.port": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "nopilot.smallModel.endpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Optional OpenAI-compatible chat completions endpoint. Invoked only with /assist."
+        },
+        "nopilot.smallModel.model": {
+          "type": "string",
+          "default": ""
+        },
+        "nopilot.voice.modelPath": {
+          "type": "string",
+          "default": "",
+          "description": "Local faster-whisper CTranslate2 model folder. No automatic model download or cloud transcription."
+        },
+        "nopilot.voice.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Python runtime for local speech; blank uses nopilot.pythonPath."
+        },
+        "nopilot.voice.language": {
+          "type": "string",
+          "default": "vi",
+          "description": "Whisper language code, e.g. vi, en or auto."
+        },
+        "nopilot.voice.device": {
+          "type": "number",
+          "default": -1,
+          "description": "PortAudio input device ID; -1 uses the default microphone."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.cjs",
+    "package": "npm run build && vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "@ag-ui/core": "^1.0.3",
+    "@vscode/codicons": "^0.0.46-24",
+    "highlight.js": "^11.11.1",
+    "ignore": "^7.0.5",
+    "markdown-it": "^14.1.0",
+    "zod": "^4.6.6"
+  },
+  "overrides": {
+    "@azure/msal-node": "^7.1.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "jsdom": "^29.1.1",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.0"
+  }
+}

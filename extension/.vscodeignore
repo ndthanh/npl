@@ -1,0 +1,16 @@
+src/**
+test/**
+node_modules/**
+tsconfig.json
+build.mjs
+package-lock.json
+bridge/__pycache__/**
+**/*.map
+*.vsix
+scripts/**
+dist/core.js
+dist/events.js
+dist/gateway.js
+dist/autocomplete.js
+dist/queue.js
+dist/voice.js
