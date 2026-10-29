@@ -1,5 +1,11 @@
 # Nopilot for VS Code
 
+## Bản 0.2.3 — Copilot ở nền
+
+Sửa bộ chọn model 0.2.2 đã dùng kích thước hiển thị để lọc nút: khi Teams ở tab Chat, frame Copilot còn tồn tại nhưng không có layout rectangles nên model bị báo không tìm thấy. Bộ chọn mới dùng trạng thái DOM/menu, không yêu cầu chuyển tab Copilot hay dùng chuột/bàn phím. Nếu chọn model lỗi, thông báo phân biệt rõ đã tìm thấy ô chat nhưng chưa xác minh được model.
+
+Sửa thêm rediscovery: giữ manifest khớp runtime đã attach, không đọc nhầm manifest mặc định khi Teams thay frame; xử lý cả frame đã bị destroy. Cài VSIX mới rồi reload VS Code để thay worker Python.
+
 ## Bản 0.2.2
 
 - Đã bỏ hard limit dung lượng source, ZIP, file upload/download và số file do harness đặt. Tối đa **3 attachments/lượt** vẫn áp dụng. Copilot có thể từ chối upload theo giới hạn phía dịch vụ; Nopilot báo lỗi thực tế, không tự resend. `.nopilotignore` vẫn dùng để chọn source phù hợp.
@@ -27,7 +33,7 @@ Chat với Teams Copilot qua Frida ngay cạnh editor. Windows desktop/local wor
 
 ## Cài và mở
 
-1. Cài VSIX bằng `Extensions: Install from VSIX…` hoặc CMD: `code --install-extension nopilot-0.2.2.vsix`.
+1. Cài VSIX bằng `Extensions: Install from VSIX…` hoặc CMD: `code --install-extension nopilot-0.2.3.vsix`.
 2. Chuẩn bị Python riêng bằng CMD:
 
    ```cmd

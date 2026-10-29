@@ -70,3 +70,12 @@ test("missing/ambiguous model controls cannot silently fall back to Auto", () =>
     dom.window.close();
   }
 });
+test('background Copilot frame can select the model with zero layout rectangles and ancestor aria-hidden',()=>{
+ const dom=new JSDOM('<main aria-hidden="true"><button id="model" aria-haspopup="menu">Auto</button><div role="menu"><button role="menuitemradio" id="target">GPT-5.6 Sol Think deeper</button></div></main>',{runScripts:'dangerously'}),w=dom.window;
+ w.HTMLElement.prototype.getClientRects=()=>[];
+ const trigger=w.document.getElementById('model'),option=w.document.getElementById('target');option.onclick=()=>{trigger.textContent=target;option.setAttribute('aria-checked','true');};
+ try{const run=operation=>w.eval(source.replace('__PAYLOAD__',JSON.stringify({operation,target})));assert(run('inspect').triggerReady);assert(run('inspect').targetVisible);assert(run('choose').clicked);assert(run('inspect').selected);}finally{w.close();}
+});
+test('retained closed menu options are ignored while the background trigger remains selectable',()=>{
+ const dom=new JSDOM('<button aria-haspopup="menu">Auto</button><div role="menu" hidden><button role="menuitemradio">GPT-5.6 Sol Think deeper</button></div>',{runScripts:'dangerously'});try{const s=dom.window.eval(source.replace('__PAYLOAD__',JSON.stringify({operation:'inspect',target})));assert(s.triggerReady);assert.equal(s.targetVisible,false);}finally{dom.window.close();}
+});

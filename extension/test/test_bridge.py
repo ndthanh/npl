@@ -16,6 +16,15 @@ def archive(entries):
     return base64.b64encode(buffer.getvalue()).decode()
 
 class ArchiveTests(unittest.TestCase):
+    def test_rediscovery_uses_the_manifest_selected_for_the_attached_runtime(self):
+        from bridge import Bridge
+        import frida
+        b=Bridge.__new__(Bridge);b.manifest={'frameVtable':123};b.metadata={'pid':7,'moduleBase':'0x1000'};b.frame='old'
+        b.evaluate=__import__('unittest.mock',fromlist=['Mock']).Mock(side_effect=[frida.core.RPCException('Frame is destroyed or inaccessible'),{'editorPresent':True}])
+        b._select_frame=lambda candidates:setattr(b,'frame','new')
+        with patch('bridge.discover_frames',return_value={'frames':['new']}) as discover,patch('bridge.json.loads',side_effect=AssertionError('must not reread default manifest')):
+            self.assertTrue(b.state()['editorPresent'])
+            discover.assert_called_once_with(7,0x1000+123)
     def test_model_is_verified_before_upload_and_failure_sends_nothing(self):
         calls=[]
         bridge=SimpleNamespace(ask=lambda *a,**k:(calls.append('ask') or {'answer':'ok'}))

@@ -91,11 +91,13 @@ class Bridge:
             if digest != manifest['moduleSha256'] and cached.is_file():manifest=json.loads(cached.read_text())
             if digest != manifest['moduleSha256']:
                 raise RuntimeError('WebView2 build changed. Regenerate the symbol manifest before attaching native calls.')
+            self.manifest=manifest
             source = (HERE / 'agent.js').read_text().replace('__CONFIG__', json.dumps(manifest))
             self.script = self.session.create_script(source)
             self.script.load()
             self.rpc = self.script.exports_sync
             self.metadata = self.rpc.metadata()
+            self.metadata.update(runtimeVersion=manifest.get('runtimeVersion'),manifestSha256=manifest['moduleSha256'])
             candidates = discover_frames(self.metadata['pid'],int(self.metadata['moduleBase'],16)+manifest['frameVtable'])
             self.frame = None
             self._select_frame(candidates)
@@ -152,8 +154,8 @@ nodes[0].click();return {opened:true,method:'Teams shell DOM click; no OS input'
     def state(self):
         try:return self.evaluate(STATE_JS)
         except frida.core.RPCException as error:
-            if 'WebView object has changed; rediscover' not in str(error):raise
-            manifest=json.loads((HERE/'build.json').read_text())
+            if not any(marker in str(error) for marker in ('WebView object has changed; rediscover','Frame is destroyed or inaccessible')):raise
+            manifest=self.manifest
             # Teams may destroy the empty-chat WebView and create a conversation
             # WebView a moment later. Retry discovery/read only, never a send.
             deadline=time.monotonic()+12

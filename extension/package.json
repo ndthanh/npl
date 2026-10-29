@@ -2,7 +2,7 @@
   "name": "nopilot",
   "displayName": "Nopilot",
   "description": "Teams Copilot beside your editor, through a local Frida bridge.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "ndthanh",
   "license": "MIT",
   "engines": {

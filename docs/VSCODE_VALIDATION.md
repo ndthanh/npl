@@ -1,5 +1,12 @@
 # Nopilot extension — kiểm chứng triển khai
 
+## Bản 0.2.3 — sửa model selector khi Copilot ở nền
+
+- Tái hiện Teams đang chọn tab Chat: frame Copilot tồn tại, nút model có **0 layout rectangles**. Bộ lọc geometry ở 0.2.2 gây lỗi chọn model.
+- Kiểm chứng Frida thật sau sửa: chọn/xác minh GPT-5.6 Sol Think deeper, gửi prompt mẫu, nhận **NOPILOT_BACKGROUND_OK**, Teams vẫn có Chat `aria-pressed=true` và Copilot `false`; không dùng chuột/bàn phím. Evidence: `outputs/nopilot-extension-validation/background-chat.json` ngoài repo.
+- Sửa rediscovery dùng manifest đã khớp runtime đang attach, xử lý cả frame destroy.
+- TypeScript qua; **59/59 Node**, **12/12 Python** qua.
+
 ## Bản 0.2.2 — 29/10/2026
 
 - TypeScript check qua; **57/57 Node**, **11/11 Python** qua.

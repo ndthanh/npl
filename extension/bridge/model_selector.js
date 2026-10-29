@@ -1,14 +1,21 @@
 (() => {
   const p=__PAYLOAD__;
   const normalize=s=>String(s||'').replace(/\s+/g,' ').trim().toLowerCase();
-  const visible=e=>e.getClientRects().length&&!e.disabled&&e.getAttribute('aria-disabled')!=='true'&&!e.closest('[aria-hidden="true"]');
+  // Teams keeps Copilot mounted behind another tab. Geometry/ancestor aria-hidden
+  // must not be used as a gate: DOM clicks work without activating the host tab.
+  const visible=e=>{
+    if(e.disabled||e.hidden||e.getAttribute('aria-disabled')==='true'||e.getAttribute('aria-hidden')==='true')return false;
+    const menu=e.closest('[role="menu"],[role="listbox"]');
+    if(menu&&(menu.hidden||menu.getAttribute('aria-hidden')==='true'||menu.closest('[hidden],[data-state="closed"]')))return false;
+    return true;
+  };
   const controls=Array.from(document.querySelectorAll('button,[role="button"],[role="combobox"],[role="menuitem"],[role="menuitemradio"],[role="option"]')).filter(visible);
   const labels=e=>[e.innerText||e.textContent,e.getAttribute('aria-label'),e.getAttribute('title'),e.querySelector('.fai-CapabilityPickerMenuItem__primaryContentWrapper')?.textContent].map(normalize);
   const target=normalize(p.target);
   const exact=(e,text)=>labels(e).includes(text);
   const deepest=nodes=>nodes.filter(e=>!nodes.some(other=>other!==e&&e.contains(other)));
   const inMenu=e=>!!e.closest('[role="menu"],[role="listbox"]')||['menuitem','menuitemradio','option'].includes(e.getAttribute('role'));
-  const triggers=deepest(controls.filter(e=>!inMenu(e)&&(e.hasAttribute('aria-haspopup')||e.getAttribute('role')==='combobox')&&labels(e).some(t=>/^(auto|quick response|think deeper|gpt[- ]?5\.)/.test(t))));
+  const triggers=deepest(controls.filter(e=>!inMenu(e)&&(e.hasAttribute('aria-haspopup')||e.getAttribute('role')==='combobox')&&labels(e).some(t=>/^(auto|quick response|think deeper|gpt[- ]?5\.)/.test(t)||/model selector|chọn mô hình/.test(t))));
   const choices=deepest(controls.filter(e=>exact(e,target)));
   const selected=triggers.some(e=>exact(e,target))||choices.some(e=>e.getAttribute('aria-checked')==='true'||e.getAttribute('aria-selected')==='true');
   const targetOptions=choices.filter(e=>!triggers.includes(e)&&!e.hasAttribute('aria-haspopup'));

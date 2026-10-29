@@ -10,7 +10,7 @@ def select_model(bridge,target=DEFAULT_MODEL,timeout=15):
     if not target:return {'modelSelectionDisabled':True}
     def run(operation):
         result=bridge.evaluate(SCRIPT.replace('__PAYLOAD__',json.dumps({'operation':operation,'target':target})))
-        if not isinstance(result,dict) or result.get('error'):raise RuntimeError(f'Không chọn được model {target}: {result}. Chọn model trong Teams rồi thử lại; chưa upload/gửi prompt.')
+        if not isinstance(result,dict) or result.get('error'):raise RuntimeError(f'Đã tìm thấy ô chat Copilot, nhưng không chọn được model {target} ({operation}): {result}. Chưa upload/gửi prompt.')
         return result
     def wait(predicate,seconds):
         deadline=time.monotonic()+seconds
