@@ -1,0 +1,4 @@
+# Optional, isolated CPU runtime. No compiler needed with the official wheel.
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+--only-binary=:all:
+llama-cpp-python==0.3.36

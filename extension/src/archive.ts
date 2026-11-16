@@ -1,10 +1,42 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import { id, sha, safeRelative, scanFiles, matcher } from "./core";
 import { processResult } from "./process";
 type Ignore = ReturnType<typeof matcher>;
 export type Snapshot = Record<string, string>;
 export type ArchiveEntry = { path: string; base64: string };
+// Manual ZIP import never executes delivery metadata or deletion instructions.
+export function zipSelection(
+  entries: ArchiveEntry[],
+  names?: string[],
+  includeMetadata = false,
+) {
+  const first = entries[0]?.path.split("/")[0];
+  const prefix =
+    first &&
+    entries.every((e) => e.path.startsWith(first + "/")) &&
+    entries.some(
+      (e) =>
+        e.path === first + "/nopilot.json" ||
+        e.path === first + "/nopilot-delivery.json",
+    )
+      ? first + "/"
+      : "";
+  const seen = new Set<string>();
+  const normalized = entries
+    .map((e) => {
+      const name = safeRelative(e.path.slice(prefix.length));
+      if (seen.has(name.toLowerCase()))
+        throw Error("ZIP có đường dẫn trùng: " + name);
+      seen.add(name.toLowerCase());
+      return { ...e, path: name };
+    })
+    .filter((e) => includeMetadata || e.path !== "nopilot-delivery.json");
+  if (names && names.some((n) => !normalized.some((e) => e.path === n)))
+    throw Error("File không thuộc ZIP.");
+  return names ? normalized.filter((e) => names.includes(e.path)) : normalized;
+}
 export type ArchiveFile = {
   path: string;
   before: string | null;
@@ -92,10 +124,12 @@ export async function stageArchive(
   base: Snapshot,
   ig: Ignore,
   contextId: string,
+  stripWrapper = true,
 ): Promise<ArchivePlan> {
   await fs.mkdir(directory, { recursive: true });
   const first = entries[0]?.path.split("/")[0];
   const prefix =
+    stripWrapper &&
     first &&
     entries.every((e) => e.path.startsWith(first + "/")) &&
     entries.some(
@@ -230,6 +264,8 @@ async function backup(plan: ArchivePlan, ig: Ignore) {
     "-c",
     "core.fsmonitor=false",
     "-c",
+    "core.longpaths=true",
+    "-c",
     "core.attributesFile=",
     "-c",
     "commit.gpgsign=false",
@@ -250,7 +286,11 @@ async function backup(plan: ArchivePlan, ig: Ignore) {
   try {
     parent = (await git(["rev-parse", "--verify", "HEAD"])).trim();
   } catch {}
-  const index = path.join(plan.directory, "backup-index-" + id());
+  // VS Code conversation storage can already exceed Windows MAX_PATH.
+  // Git also appends .lock: keep this disposable index outside artifact storage.
+  // mkdtemp isolates simultaneous backups and never touches the user's index.
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "np-git-"));
+  const index = path.join(scratch, "index");
   const env = {
     GIT_INDEX_FILE: index,
     GIT_AUTHOR_NAME: "Nopilot Backup",
@@ -324,7 +364,7 @@ async function backup(plan: ArchivePlan, ig: Ignore) {
     plan.backup = { commit, ref, repository };
     await save(plan);
   } finally {
-    await fs.rm(index, { force: true });
+    await fs.rm(scratch, { recursive: true, force: true });
   }
 }
 async function replace(root: string, file: string, bytes: Buffer | null) {
@@ -425,4 +465,44 @@ export async function restoreArchive(
   }
   plan.state = "restored";
   await save(plan);
+}
+
+// Fork a checked subset; keep the original immutable staging for the files
+// the developer did not accept. Each accepted batch owns its own checkpoint.
+export async function selectArchive(
+  plan: ArchivePlan,
+  names: string[],
+  directory: string,
+) {
+  const chosen = new Set(names.map(safeRelative));
+  if (
+    !chosen.size ||
+    [...chosen].some((name) => !plan.files.some((f) => f.path === name))
+  )
+    throw Error("Danh sách thay đổi được chọn không hợp lệ.");
+  if (plan.state !== "staged") throw Error("Đề xuất gốc không còn staged.");
+  const files = plan.files.filter((f) => chosen.has(f.path));
+  await verifyStaging({ ...plan, files });
+  const next: ArchivePlan = {
+    ...plan,
+    id: id(),
+    directory,
+    files: structuredClone(files),
+    backup: undefined,
+    error: undefined,
+    state: "staged",
+  };
+  await fs.mkdir(directory, { recursive: true });
+  for (const f of files)
+    for (const section of ["before", "staged"] as const) {
+      if ((section === "before" ? f.before : f.after) === null) continue;
+      const target = path.join(directory, section, f.path);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.copyFile(
+        await checked(path.join(plan.directory, section), f.path),
+        target,
+      );
+    }
+  await save(next);
+  return next;
 }

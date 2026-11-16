@@ -3,3 +3,4 @@ beautifulsoup4>=4.13,<5
 markdownify>=1.2,<2
 playwright>=1.51,<2
 truststore>=0.10,<1
+pefile>=2024.8.26

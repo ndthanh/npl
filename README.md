@@ -1,6 +1,6 @@
 # Nopilot for VS Code
 
-Branch `feat/vscode-extension`: VS Code chat + workspace orchestration, retaining the Windows Teams Frida bridge. The original Web/CLI application remains on `main`.
+Nopilot provides VS Code chat and workspace orchestration using a local Frida bridge for Microsoft Teams Copilot.
 
 - [Extension setup and workflow](extension/README.md)
 - [Design and architecture](docs/VSCODE_DESIGN.md)

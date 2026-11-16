@@ -10,6 +10,44 @@ const {
   localDelete,
   scanFiles,
 } = require("../dist/core.js");
+test("contract fences support longer backticks/tildes and embedded Markdown source without truncating JSON", () => {
+  const contract = {
+    type: "change_set",
+    baseContextId: "current",
+    edits: [
+      {
+        path: "README.md",
+        baseSha256: null,
+        content: "# Run\n```cmd\npython main.py\n```\n",
+      },
+    ],
+  };
+  for (const fence of ["```", "````", "~~~~", "`````"]) {
+    assert.deepEqual(
+      parseContract(
+        fence + "json\n" + JSON.stringify(contract, null, 2) + "\n" + fence,
+      ),
+      contract,
+    );
+  }
+  assert.deepEqual(
+    parseContract("```JSON\r\n" + JSON.stringify(contract) + "\r\n````"),
+    contract,
+  );
+  assert.equal(
+    parseContract("````json\n" + JSON.stringify(contract) + "\n```"),
+    undefined,
+  );
+});
+test("contract parser does not promote nested JSON examples from a different-language or quoted fence", () => {
+  const body = '```json\n{"type":"run_plan","commands":[]}\n```';
+  assert.equal(parseContract("````markdown\n" + body + "\n````"), undefined);
+  assert.equal(
+    parseContract('> ```json\n> {"type":"run_plan"}\n> ```'),
+    undefined,
+  );
+  assert.equal(parseContract("```python\n" + body + "\n```"), undefined);
+});
 test("Windows traversal, ADS, aliases and reserved paths are rejected", () => {
   for (const bad of [
     "../secret",

@@ -2,25 +2,26 @@
   "name": "nopilot",
   "displayName": "Nopilot",
   "description": "Teams Copilot beside your editor, through a local Frida bridge.",
-  "version": "0.2.3",
+  "version": "0.7.8",
   "publisher": "ndthanh",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.95.0"
+    "vscode": "^1.108.0"
   },
   "categories": [
     "Other"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/ndthanh/nopilot.git"
+    "url": "https://github.com/ndthanh/npl.git"
   },
   "main": "./dist/extension.js",
   "extensionKind": [
     "ui"
   ],
   "activationEvents": [
-    "onView:nopilot.chat"
+    "onView:nopilot.chat",
+    "onStartupFinished"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -49,6 +50,10 @@
       ]
     },
     "commands": [
+      {
+        "command": "nopilot.migration",
+        "title": "Nopilot: Open Migration Workbench"
+      },
       {
         "command": "nopilot.open",
         "title": "Nopilot: Open Chat"
@@ -97,28 +102,36 @@
         "title": "Nopilot: Check Runtime"
       },
       {
+        "command": "nopilot.generateTeamsManifest",
+        "title": "Nopilot: Tạo manifest cho bản Teams này"
+      },
+      {
         "command": "nopilot.repairRuntime",
         "title": "Nopilot: Repair Bridge Dependencies"
+      },
+      {
+        "command": "nopilot.initIgnore",
+        "title": "Nopilot: Create or Open .nopilotignore"
+      },
+      {
+        "command": "nopilot.setup",
+        "title": "Nopilot: Set Up Python Environment"
+      },
+      {
+        "command": "nopilot.database",
+        "title": "Nopilot: Open Data Explorer"
+      },
+      {
+        "command": "nopilot.moveSidebar",
+        "title": "Nopilot: Move Chat to Sidebar…",
+        "icon": "$(layout-sidebar-right)"
+      },
+      {
+        "command": "nopilot.localModel",
+        "title": "Nopilot: Configure Local GGUF Model"
       }
     ],
     "menus": {
-      "view/title": [
-        {
-          "command": "nopilot.new",
-          "when": "view == nopilot.chat",
-          "group": "navigation@1"
-        },
-        {
-          "command": "nopilot.history",
-          "when": "view == nopilot.chat",
-          "group": "navigation@2"
-        },
-        {
-          "command": "nopilot.expand",
-          "when": "view == nopilot.chat",
-          "group": "navigation@3"
-        }
-      ],
       "editor/context": [
         {
           "command": "nopilot.addSelection",
@@ -185,6 +198,56 @@
           "type": "string",
           "default": "GPT-5.6 Sol Think deeper",
           "description": "Exact Copilot menu label. Verified before uploading/sending. Empty disables model selection."
+        },
+        "nopilot.localModel.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Dedicated Python executable with llama-cpp-python installed.",
+          "scope": "machine",
+          "restricted": true
+        },
+        "nopilot.localModel.modelPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute local GGUF path. Never downloaded or loaded automatically.",
+          "scope": "machine",
+          "restricted": true
+        },
+        "nopilot.localModel.contextSize": {
+          "type": "number",
+          "default": 8192,
+          "description": "Local context window in tokens.",
+          "scope": "machine",
+          "restricted": true,
+          "minimum": 2048,
+          "maximum": 32768
+        },
+        "nopilot.localModel.threads": {
+          "type": "number",
+          "default": 4,
+          "description": "CPU inference threads.",
+          "scope": "machine",
+          "restricted": true,
+          "minimum": 1,
+          "maximum": 64
+        },
+        "nopilot.localModel.gpuLayers": {
+          "type": "number",
+          "default": 0,
+          "description": "0 uses CPU. GPU requires a compatible llama-cpp-python build.",
+          "scope": "machine",
+          "restricted": true,
+          "minimum": -1,
+          "maximum": 256
+        },
+        "nopilot.localModel.maxSteps": {
+          "type": "number",
+          "default": 10,
+          "description": "Maximum read/inference steps per explicit local task. No automatic continuation.",
+          "scope": "machine",
+          "restricted": true,
+          "minimum": 1,
+          "maximum": 10
         }
       }
     }
@@ -197,10 +260,20 @@
   },
   "dependencies": {
     "@ag-ui/core": "^1.0.3",
+    "@codemirror/autocomplete": "^6.20.4",
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
+    "@lezer/highlight": "^1.2.5",
     "@vscode/codicons": "^0.0.46-24",
+    "codemirror": "^6.0.2",
+    "diff": "^8.0.4",
     "highlight.js": "^11.11.1",
     "ignore": "^7.0.5",
     "markdown-it": "^14.1.0",
+    "qrcode": "^1.5.4",
+    "yazl": "^3.3.1",
     "zod": "^4.6.6"
   },
   "overrides": {
@@ -209,7 +282,9 @@
   "devDependencies": {
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
     "@types/vscode": "^1.95.0",
+    "@types/yazl": "^3.3.0",
     "@vscode/vsce": "^3.6.0",
     "esbuild": "^0.25.0",
     "jsdom": "^29.1.1",

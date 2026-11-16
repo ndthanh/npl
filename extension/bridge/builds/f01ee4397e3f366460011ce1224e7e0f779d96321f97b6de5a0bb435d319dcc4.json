@@ -1,0 +1,14 @@
+{
+  "coreExecute": 568272,
+  "frameVtable": 7090016,
+  "frameExecute": 521920,
+  "coreVtable": 7091648,
+  "moduleSha256": "f01ee4397e3f366460011ce1224e7e0f779d96321f97b6de5a0bb435d319dcc4",
+  "architecture": "x64",
+  "runtimeVersion": "156.0.4314.58",
+  "symbolServer": "https://msdl.microsoft.com/download/symbols/",
+  "pdb": [
+    "EmbeddedBrowserWebView.dll.pdb",
+    "31B31C51A697A8964C4C44205044422E1"
+  ]
+}

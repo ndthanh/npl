@@ -15,3 +15,17 @@ dist/autocomplete.js
 dist/queue.js
 dist/voice.js
 dist/archive.js
+dist/onboarding.js
+dist/changes.js
+dist/database-test.js
+dist/migration-test.js
+dist/local-model-test.js
+dist/local-model-panel-test.js
+dist/local-tools-test.js
+dist/sidecar-test.js
+dist/project-context.js
+dist/development-test.js
+dist/decimen-test.js
+dist/workspace-zip-test.js
+
+dist/goal-test.js

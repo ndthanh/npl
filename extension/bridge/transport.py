@@ -10,9 +10,9 @@ class Harness:
         self.local_session_id = uuid.uuid4().hex
     def record(self, *args, **kwargs):
         pass
-    def connect(self,force_open=False):
+    def connect(self,force_open=False,timeout=30):
             self.close()
-            self.bridge=Bridge(self.pid,open_copilot=self.ensure_open,force_open=force_open)
+            self.bridge=Bridge(self.pid,open_copilot=self.ensure_open,force_open=force_open,timeout=timeout)
             return self.status()
 
     def close(self):
@@ -24,7 +24,8 @@ class Harness:
             state=self.bridge.state()
             return {'connected':True,**self.bridge.metadata,'title':state['title'],
                     'editorPresent':state['editorPresent'],'generating':state['generating'],
-                    'hasDraft':bool(state['draft'].strip()),'visibleTurns':len(state['turns'])}
+                    'hasDraft':bool(state['draft'].strip()),'attachments':state.get('attachments',[]),
+                    'visibleTurns':len(state['turns'])}
 
     def read(self):
             turns=self.bridge.state()['turns']
@@ -35,7 +36,7 @@ class Harness:
             if state['generating']:raise RuntimeError('Copilot is generating; wait before starting a new chat')
             if state['draft'].strip():raise RuntimeError('Existing draft present; refusing to discard it')
             pending=self.bridge.evaluate('!!document.querySelector(\'button[aria-label^="Remove attachment "]\')')
-            if not pending and not state['turns'] and self.bridge.evaluate('location.pathname')=='/chat':
+            if not pending and state['editorPresent'] and not state['turns'] and state['route']=='/chat':
                 self.local_session_id=uuid.uuid4().hex
                 return {'newChat':True,'editorPresent':True,'visibleTurns':0,'previousChatDeleted':False,'alreadyEmpty':True}
             click_script=r'''(() => {
@@ -65,7 +66,7 @@ class Harness:
                     self.connect()  # Rediscover a replaced frame; never click New chat twice.
                     reconnected=True
                     continue
-                ready=state['editorPresent'] and not state['turns'] and not state['draft'].strip() and not state['generating']
+                ready=state['route']=='/chat' and state['editorPresent'] and not state['turns'] and not state['draft'].strip() and not state['generating']
                 stable=stable+1 if ready else 0
                 if stable>=2:
                     result={'newChat':True,'editorPresent':True,'visibleTurns':0,'previousChatDeleted':False}
@@ -75,8 +76,11 @@ class Harness:
                 time.sleep(.4)
             raise TimeoutError('New chat was clicked, but an empty ready composer is unconfirmed; inspect Teams before retrying')
 
-    def downloads(self):
-            return self.bridge.evaluate(DOWNLOADS_JS)
+    def downloads(self,turn_id=None):
+            source=DOWNLOADS_JS
+            if turn_id:
+                source=source.replace("Array.from(document.querySelectorAll('[data-testid=\"m365-chat-llm-web-ui-chat-message\"]')).at(-1)","document.getElementById("+json.dumps(turn_id)+")")
+            return self.bridge.evaluate(source)
 
     def restore_chat(self,conversation_id,timeout=30):
             if not re.fullmatch(r'[a-fA-F0-9-]{36}',conversation_id):raise ValueError('Invalid conversation ID')
@@ -94,7 +98,7 @@ class Harness:
                 if clicked:
                     route=self.bridge.evaluate('location.pathname')
                     state=self.bridge.state()
-                    ready=route==expected and state['editorPresent'] and bool(state['turns']) and not state['generating']
+                    ready=route==expected and state['editorPresent'] and bool(state['turns'])
                     stable=stable+1 if ready else 0
                     if stable>=3:return
                 time.sleep(.5)

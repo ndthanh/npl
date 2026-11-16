@@ -14,6 +14,97 @@ const { execFile } = require("node:child_process"),
   { promisify } = require("node:util");
 const exec = promisify(execFile);
 const clean = async () => {};
+test("a selected archive is isolated; partial add/delete/binary apply and Undo never touch omitted files", async () => {
+  const { selectArchive } = require("../dist/archive.js"),
+    f = await fixture();
+  try {
+    await fs.writeFile(path.join(f.root, "remove.txt"), "old");
+    await fs.writeFile(path.join(f.root, "keep.py"), "original");
+    const all = await stageArchive(
+      f.root,
+      f.stage,
+      [
+        entry("keep.py", "unaccepted"),
+        entry("new.bin", Buffer.from([0, 255, 8])),
+        entry(
+          "nopilot-delivery.json",
+          JSON.stringify({
+            schemaVersion: 1,
+            baseContextId: "ctx",
+            deletePaths: ["remove.txt"],
+          }),
+        ),
+      ],
+      await workspaceSnapshot(f.root, f.ig),
+      f.ig,
+      "ctx",
+    );
+    await assert.rejects(() =>
+      selectArchive(all, [], path.join(f.dir, "empty")),
+    );
+    await assert.rejects(() =>
+      selectArchive(all, ["unknown"], path.join(f.dir, "bad")),
+    );
+    const selected = await selectArchive(
+      all,
+      ["new.bin", "remove.txt"],
+      path.join(f.dir, "selected"),
+    );
+    await applyArchive(selected, f.ig, clean);
+    assert.equal(all.state, "staged");
+    assert.equal(
+      await fs.readFile(path.join(f.root, "keep.py"), "utf8"),
+      "original",
+    );
+    assert.deepEqual(
+      await fs.readFile(path.join(f.root, "new.bin")),
+      Buffer.from([0, 255, 8]),
+    );
+    await assert.rejects(fs.stat(path.join(f.root, "remove.txt")));
+    await restoreArchive(selected, clean);
+    assert.equal(
+      await fs.readFile(path.join(f.root, "remove.txt"), "utf8"),
+      "old",
+    );
+    await assert.rejects(fs.stat(path.join(f.root, "new.bin")));
+    await fs.writeFile(path.join(f.stage, "staged", "keep.py"), "tampered");
+    await assert.rejects(
+      () => selectArchive(all, ["keep.py"], path.join(f.dir, "tamper")),
+      /Staged/,
+    );
+  } finally {
+    await fs.rm(f.dir, { recursive: true, force: true });
+  }
+});
+test("manual selection preserves the previewed subfolder path even when that folder contains a contract", async () => {
+  const f = await fixture();
+  try {
+    const entries = require("../dist/archive.js").zipSelection(
+      [
+        entry("root.txt", "keep"),
+        entry("sub/nopilot.json", "{}"),
+        entry("sub/main.py", "hello"),
+      ],
+      ["sub/nopilot.json", "sub/main.py"],
+    );
+    const plan = await stageArchive(
+      f.root,
+      f.stage,
+      entries,
+      {},
+      f.ig,
+      "ctx",
+      false,
+    );
+    assert.equal(plan.prefix, "");
+    assert.deepEqual(
+      plan.files.map((f) => f.path),
+      ["sub/nopilot.json", "sub/main.py"],
+    );
+  } finally {
+    await fs.rm(f.dir, { recursive: true, force: true });
+  }
+});
 const entry = (name, content) => ({
   path: name,
   base64: Buffer.from(content).toString("base64"),
@@ -30,6 +121,49 @@ async function git(root, ...args) {
     await exec("git", args, { cwd: root, windowsHide: true })
   ).stdout.trim();
 }
+test("deep VS Code conversation artifact paths do not break Git backup or update", async () => {
+  const f = await fixture();
+  try {
+    const stage = path.join(
+      f.dir,
+      "workspaceStorage",
+      "a".repeat(32),
+      "ndthanh.nopilot",
+      "conversations",
+      "b".repeat(36),
+      "artifacts",
+      "revision-" + "c".repeat(36),
+      "nested-" + "d".repeat(40),
+    );
+    assert(stage.length > 260);
+    await fs.writeFile(path.join(f.root, "main.py"), "original source");
+    const plan = await stageArchive(
+      f.root,
+      stage,
+      [entry("main.py", "updated source")],
+      await workspaceSnapshot(f.root, f.ig),
+      f.ig,
+      "ctx",
+    );
+    await applyArchive(plan, f.ig, clean);
+    assert.equal(plan.state, "applied");
+    assert.equal(
+      await git(f.root, "show", plan.backup.commit + ":main.py"),
+      "original source",
+    );
+    assert.equal(
+      await fs.readFile(path.join(f.root, "main.py"), "utf8"),
+      "updated source",
+    );
+    await restoreArchive(plan, clean);
+    assert.equal(
+      await fs.readFile(path.join(f.root, "main.py"), "utf8"),
+      "original source",
+    );
+  } finally {
+    await fs.rm(f.dir, { recursive: true, force: true });
+  }
+});
 test("empty workspace receives text/binary project after Git backup; repeat update reuses runtime and restores", async () => {
   const f = await fixture();
   try {

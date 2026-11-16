@@ -19,6 +19,7 @@ export const DEFAULT_IGNORE = [
   ".env.*",
   "*.pem",
   "*.key",
+  "*.gguf",
   "screenshots/",
   "artifacts/",
 ];
@@ -99,9 +100,28 @@ export interface ChangeSet {
   commitMessage?: string;
 }
 export function parseContract(text: string): any {
-  const fence = [...text.matchAll(/```(?:json)?\s*\n([\s\S]*?)```/g)].map(
-    (m) => m[1],
-  );
+  const fence: string[] = [];
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const open = /^ {0,3}(`{3,}|~{3,})([^\r\n]*)$/.exec(lines[i]);
+    if (!open) continue;
+    const closing = new RegExp(
+      "^ {0,3}" + open[1][0] + "{" + open[1].length + ",}[ \\t]*$",
+    );
+    const body: string[] = [];
+    let closed = false;
+    while (++i < lines.length) {
+      if (closing.test(lines[i])) {
+        closed = true;
+        break;
+      }
+      body.push(lines[i]);
+    }
+    // Consume every complete fence, including other languages, so a quoted
+    // JSON example nested inside a Python/Markdown block is never promoted.
+    if (closed && ["", "json"].includes(open[2].trim().toLowerCase()))
+      fence.push(body.join("\n"));
+  }
   for (const candidate of [text.trim(), ...fence]) {
     try {
       const obj = JSON.parse(candidate);

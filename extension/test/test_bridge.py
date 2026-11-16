@@ -16,6 +16,84 @@ def archive(entries):
     return base64.b64encode(buffer.getvalue()).decode()
 
 class ArchiveTests(unittest.TestCase):
+    def test_new_chat_waits_for_new_route_even_when_old_chat_looks_empty(self):
+        from transport import Harness
+        from unittest.mock import Mock
+        old = dict(editorPresent=True, generating=False, draft='', turns=[],
+                   route='/chat/conversation/11111111-1111-1111-1111-111111111111')
+        fresh = {**old, 'route': '/chat'}
+        harness = Harness()
+        harness.bridge = SimpleNamespace(
+            state=Mock(side_effect=[old, old, old, fresh, fresh]),
+            evaluate=Mock(side_effect=[False, {'clicked': True}]),
+        )
+        with patch('transport.time.sleep'):
+            self.assertTrue(harness.new_chat()['newChat'])
+        self.assertEqual(harness.bridge.state.call_count, 5)
+        self.assertEqual(harness.bridge.evaluate.call_count, 2)
+
+    def test_wrong_conversation_is_rejected_before_model_selection_or_upload(self):
+        from unittest.mock import Mock
+        bridge = SimpleNamespace(state=lambda: {'route': '/chat/conversation/old'})
+        journal = SimpleNamespace(check_target=Mock(side_effect=RuntimeError('Wrong Copilot conversation')))
+        with patch('rpc.connect', return_value=bridge), patch('request_journal.RequestJournal', return_value=journal), \
+             patch('model_selector.select_model') as model, patch.object(rpc.harness, 'upload') as upload:
+            with self.assertRaisesRegex(RuntimeError, 'Wrong Copilot conversation'):
+                rpc.dispatch('ask', {'prompt': 'test', 'uploads': ['fixture.txt'], 'journalFile': 'owned', 'requestId': 'test'})
+            model.assert_not_called()
+            upload.assert_not_called()
+
+    def test_stopped_identity_binding_only_reads_the_verified_visible_turn_and_never_sends(self):
+        from unittest.mock import Mock
+        journal=SimpleNamespace(value={'phase':'stopped'},match=Mock(return_value={'question':'old'}),observe=Mock())
+        state={'generating':False,'draft':'','route':'/chat/conversation/11111111-1111-1111-1111-111111111111'}
+        bridge=SimpleNamespace(state=Mock(return_value=state))
+        with patch('rpc.connect',return_value=bridge),patch('request_journal.RequestJournal',return_value=journal):
+            result=rpc.dispatch('bind_stopped',{'requestId':'old','journalFile':'owned','prompt':'old','timeout':0})
+            self.assertTrue(result['confirmed']);journal.observe.assert_called_once_with(state)
+            state['route']='/chat';self.assertFalse(rpc.dispatch('bind_stopped',{'requestId':'old','journalFile':'owned','prompt':'old','timeout':0})['confirmed'])
+            journal.match.return_value=None
+            with self.assertRaisesRegex(RuntimeError,'nothing was sent'):rpc.dispatch('bind_stopped',{'requestId':'old','journalFile':'owned','prompt':'old'})
+    def test_partial_answer_snapshots_precede_completion_and_support_markdown_rewrites(self):
+        from bridge import Bridge
+        from unittest.mock import Mock
+        b=Bridge.__new__(Bridge);initial={'generating':False,'draft':'','turns':[]}
+        def state(answer,markdown,ready=False):return {'generating':not ready,'draft':'','route':'/chat','turns':[{'id':'t','question':'test','answer':answer,'answerMarkdown':markdown,'copyReady':ready}]}
+        final=state('complete','**complete**',True)
+        b.state=Mock(side_effect=[initial,{**initial,'draft':'test'},state('one','one'),state('one','one'),state('rewritten','**rewritten**'),final,final,final,final,final]);b.fill_draft=Mock(return_value={'inserted':True});b.evaluate=Mock(return_value={'sent':True});events=[]
+        with patch('bridge.time.sleep'):reply=b.ask('test',progress=events.append)
+        self.assertEqual([event['text'] for event in events],['one','**rewritten**','**complete**'])
+        self.assertTrue(events[0]['generating']);self.assertFalse(events[-1]['generating']);self.assertEqual(reply['answerMarkdown'],'**complete**')
+    def test_service_failure_finishes_without_copy_button_or_retry(self):
+        from bridge import Bridge
+        from unittest.mock import Mock
+        b=Bridge.__new__(Bridge)
+        initial={'generating':False,'draft':'','turns':[]}
+        failure={'generating':False,'draft':'','turns':[{'question':'test','answer':'','copyReady':False,'serviceError':{'retryAvailable':True}}]}
+        b.state=Mock(side_effect=[initial,{**initial,'draft':'test'},failure]);b.fill_draft=Mock(return_value={'inserted':True});b.evaluate=Mock(return_value={'sent':True})
+        with patch('bridge.time.sleep'):result=b.ask('test')
+        self.assertEqual(result['completion'],'failed');self.assertEqual(b.evaluate.call_count,1)
+    def test_cancel_stops_before_returning_and_never_returns_partial_code(self):
+        from bridge import Bridge
+        from unittest.mock import Mock
+        b=Bridge.__new__(Bridge);initial={'generating':False,'draft':'','turns':[]}
+        b.state=Mock(side_effect=[initial,{**initial,'draft':'test'},{'generating':True,'draft':'','turns':[{'question':'test','answer':'partial code','copyReady':False}]}]);b.fill_draft=Mock(return_value={'inserted':True});b.evaluate=Mock(return_value={'sent':True});b.stop_generation=Mock(return_value={'stopped':True})
+        cancel=Mock(side_effect=[False,False,True])
+        with patch('bridge.time.sleep'):result=b.ask('test',cancelled=cancel)
+        self.assertEqual(result['completion'],'stopped');self.assertEqual(result['answer'],'');b.stop_generation.assert_called_once_with('test')
+    def test_stop_must_settle_and_ambiguous_target_is_not_clicked(self):
+        from bridge import Bridge
+        from unittest.mock import Mock
+        b=Bridge.__new__(Bridge);b.evaluate=Mock(return_value={'clicked':True});b.state=Mock(side_effect=[{'generating':False},{'generating':False}])
+        with patch('bridge.time.sleep'):self.assertTrue(b.stop_generation('test')['stopped'])
+        b.evaluate=Mock(return_value={'error':'ambiguous'})
+        with self.assertRaisesRegex(RuntimeError,'unconfirmed'):b.stop_generation('test')
+    def test_cancel_control_is_scoped_to_the_exact_rpc_request(self):
+        import tempfile,os,json
+        with tempfile.TemporaryDirectory() as folder:
+            file=pathlib.Path(folder)/'control.json';file.write_text(json.dumps({'cancel':'old'}))
+            with patch.dict(os.environ,{'NOPILOT_CONTROL_FILE':str(file)}):
+                self.assertTrue(rpc.cancellation({'controlId':'old'}));self.assertFalse(rpc.cancellation({'controlId':'new'}));self.assertFalse(rpc.cancellation({}))
     def test_rediscovery_uses_the_manifest_selected_for_the_attached_runtime(self):
         from bridge import Bridge
         import frida
@@ -27,7 +105,7 @@ class ArchiveTests(unittest.TestCase):
             discover.assert_called_once_with(7,0x1000+123)
     def test_model_is_verified_before_upload_and_failure_sends_nothing(self):
         calls=[]
-        bridge=SimpleNamespace(ask=lambda *a,**k:(calls.append('ask') or {'answer':'ok'}))
+        bridge=SimpleNamespace(state=lambda: {},ask=lambda *a,**k:(calls.append('ask') or {'answer':'ok'}))
         with patch('rpc.connect',return_value=bridge),patch('rpc.route',return_value='/chat'),patch.object(rpc.harness,'downloads',return_value=[]),patch.object(rpc.harness,'upload',side_effect=lambda p:calls.append('upload')),patch('model_selector.select_model',side_effect=lambda *a,**k:(calls.append('model') or {'verified':True})):
             rpc.dispatch('ask',{'prompt':'test','uploads':['fixture.txt']})
         self.assertEqual(calls,['model','upload','ask'])

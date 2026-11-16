@@ -58,6 +58,41 @@ export const CONTEXT: Suggestion[] = [
 ];
 export const COMMANDS: Suggestion[] = [
   {
+    id: "/goal",
+    label: "/goal",
+    detail: "Mục tiêu phát triển · Definition of Done · 20 lượt",
+    icon: "target",
+    action: "command",
+  },
+  {
+    id: "/local",
+    label: "/local",
+    detail: "Model GGUF local · thiết lập hoặc diễn giải nhiệm vụ",
+    icon: "chip",
+    action: "command",
+  },
+  {
+    id: "/ignore",
+    label: "/ignore",
+    detail: "Tạo hoặc mở .nopilotignore của project",
+    icon: "exclude",
+    action: "command",
+  },
+  {
+    id: "/setup",
+    label: "/setup",
+    detail: "Chuẩn bị Python runtime và dependencies Nopilot",
+    icon: "tools",
+    action: "command",
+  },
+  {
+    id: "/db",
+    label: "/db",
+    detail: "Mở Data explorer · ODBC, SQLite, CSV/Excel",
+    icon: "database",
+    action: "command",
+  },
+  {
     id: "/upload",
     label: "/upload",
     detail: "Chọn file và điền đường dẫn · chưa gửi",

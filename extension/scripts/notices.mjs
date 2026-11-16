@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 const names = [
+  "diff",
   "@ag-ui/core",
   "@vscode/codicons",
   "zod",
@@ -15,6 +16,16 @@ const names = [
   "uc.micro",
 ];
 const directory = "dist/licenses";
+const queue = ["codemirror", "@codemirror/lang-sql", "qrcode", "yazl"];
+while (queue.length) {
+  const name = queue.shift();
+  if (names.includes(name)) continue;
+  names.push(name);
+  const metadata = JSON.parse(
+    await fs.readFile(path.join("node_modules", name, "package.json"), "utf8"),
+  );
+  queue.push(...Object.keys(metadata.dependencies ?? {}));
+}
 await fs.mkdir(directory, { recursive: true });
 const notices = [
   "Third-party components distributed with Nopilot.",

@@ -22,6 +22,7 @@ harness = Harness()
 browser = None
 pw = None
 session_lock = None
+progress_sink = lambda value:None
 
 def acquire_lock():
     global session_lock
@@ -61,6 +62,12 @@ def check_path(name):
         raise ValueError('Unsafe archive path')
     return p
 
+def cancellation(p):
+    control=os.environ.get('NOPILOT_CONTROL_FILE');identifier=p.get('controlId')
+    if not control or not identifier:return False
+    try:return json.loads(pathlib.Path(control).read_text(encoding='utf-8')).get('cancel')==identifier
+    except (OSError,ValueError):return False
+
 def dispatch(method, p):
     global browser, pw
     if method == 'doctor':
@@ -71,9 +78,16 @@ def dispatch(method, p):
         return unpack_project(p['base64'])
     if method == 'connect':
         acquire_lock()
-        return {**harness.connect(), 'route':route()}
+        from connection import establish
+        try:return {**establish(harness,progress_sink), 'route':route()}
+        except Exception:
+            # No active owner is needed after failed discovery.
+            if harness.bridge is None:release_lock()
+            raise
     if method == 'status':
         return {**harness.status(), 'route':route()} if harness.bridge else {'connected':False}
+    if method == 'clear_attachments':
+        return connect().clear_attachments(p['route'],p['attachments'])
     if method == 'new':
         connect()
         return harness.new_chat()
@@ -81,20 +95,70 @@ def dispatch(method, p):
         connect()
         harness.restore_chat(p['conversationId'])
         return {'route':route()}
+    if method == 'bind_stopped':
+        bridge=connect()
+        from request_journal import RequestJournal,conversation_id
+        journal=RequestJournal(p['journalFile'],p['requestId'],p['prompt'])
+        if journal.value.get('phase')!='stopped':raise RuntimeError('Only a confirmed stopped turn can be rebound')
+        deadline=time.monotonic()+min(max(p.get('timeout',8),0),8)
+        while True:
+            state=bridge.state()
+            turn=journal.match(state,require_route=False)
+            if not turn or state['generating'] or state['draft'].strip():raise RuntimeError('The stopped turn is not the visible idle conversation; nothing was sent')
+            if conversation_id(state.get('route')):
+                journal.observe(state)
+                return {'confirmed':True,'route':state['route']}
+            if time.monotonic()>=deadline:return {'confirmed':False}
+            time.sleep(.5)
     if method == 'ask':
         bridge=connect()
+        from request_journal import RequestJournal
+        journal=RequestJournal(p['journalFile'],p['requestId'],p['prompt'],progress_sink) if p.get('journalFile') else None
+        state=bridge.state()
+        if journal:journal.check_target(state)
+        if state.get('attachments'):
+            result={'completion':'not_sent','answer':'','sent':False,'route':state.get('route')}
+            if journal:journal.finish(result)
+            return result
         from model_selector import select_model,DEFAULT_MODEL
+        progress_sink({'kind':'copilot_phase','requestId':p.get('requestId'),'phase':'model'})
         model=select_model(bridge,p.get('model',DEFAULT_MODEL))
-        for upload in p.get('uploads', []):
+        for index,upload in enumerate(p.get('uploads', [])):
+            if journal:journal.check_target(bridge.state())
+            progress_sink({'kind':'copilot_phase','requestId':p.get('requestId'),'phase':'upload','index':index+1,'total':len(p.get('uploads',[]))})
             harness.upload(upload)
-        reply=bridge.ask(p['prompt'], timeout=p.get('timeout',300))
-        return {**reply, 'route':route(), 'downloads':harness.downloads(),'model':model}
+        progress_sink({'kind':'copilot_phase','requestId':p.get('requestId'),'phase':'waiting'})
+        ask_started=time.monotonic()
+        try:reply=bridge.ask(p['prompt'], timeout=p.get('timeout',300),cancelled=lambda:cancellation(p),journal=journal,progress=progress_sink)
+        except Exception as error:
+            from connection import establish,retryable
+            if not journal or journal.value.get('phase') not in ('send_intent','submitted') or not retryable(error):raise
+            # A new WebView can replace the empty-chat frame immediately after
+            # Send. Reattach and READ the pending request; never call ask twice.
+            progress_sink({'kind':'request_reconnect','message':'Teams đã thay frame sau Send; đang kết nối lại để đọc đúng lượt, không gửi lại.'})
+            establish(harness,lambda value:None)
+            from request_journal import recover
+            remaining=max(0,p.get('timeout',300)-(time.monotonic()-ask_started))
+            reply=recover(harness,journal,remaining,cancelled=lambda:cancellation(p))
+            if reply.get('completion') in ('unconfirmed','generating'):raise RuntimeError('Frame reconnected, but submitted request is not confirmed; recover it before sending again')
+        result={**reply, 'route':reply.get('route') or route(),
+                'downloads':harness.downloads(reply.get('id')) if reply.get('completion','completed')=='completed' else [],
+                'model':model}
+        if journal:journal.verify_route({'route':result['route']})
+        if journal:journal.finish(result)
+        return result
+    if method == 'recover':
+        connect()
+        from request_journal import RequestJournal,recover
+        journal=RequestJournal(p['journalFile'],p['requestId'],p['prompt'],progress_sink)
+        reply=recover(harness,journal,min(p.get('timeout',30),60))
+        return {**reply,'downloads':harness.downloads(reply['id']) if reply.get('completion')=='completed' and reply.get('id') else []}
     if method == 'read':
         connect()
         return {**harness.read(),'route':route(),'downloads':harness.downloads()}
     if method == 'download':
         connect()
-        return {'base64':base64.b64encode(harness.bridge.read_download(p['name'])).decode('ascii')}
+        return {'base64':base64.b64encode(harness.bridge.read_download(p['name'],turn_id=p.get('turnId'),expected_route=p.get('route'))).decode('ascii')}
     if method in ('pack','pack_project'):
         out=io.BytesIO()
         with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as archive:
@@ -161,12 +225,15 @@ def dispatch(method, p):
     raise ValueError('Unknown method: '+method)
 
 def main():
+    global progress_sink
     sys.stdin.reconfigure(encoding='utf-8')
     sys.stdout.reconfigure(encoding='utf-8',line_buffering=True)
     for line in sys.stdin:
         request={}
         try:
             request=json.loads(line)
+            protocol_output=sys.stdout
+            progress_sink=lambda value:print(json.dumps({'id':request['id'],'type':'progress','value':value},ensure_ascii=True),file=protocol_output,flush=True)
             print('RPC start '+str(request.get('id'))+' '+str(request.get('method')),file=sys.stderr,flush=True)
             with contextlib.redirect_stdout(sys.stderr):
                 result=dispatch(request['method'],request.get('params',{}))

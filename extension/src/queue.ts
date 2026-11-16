@@ -72,6 +72,8 @@ export function queueContextMatches(conversation: any, item: QueuedMessage) {
 }
 export type Activity = {
   id: string;
+  messageId?: string;
+  changeId?: string;
   kind: "command" | "tool" | "context";
   title: string;
   status: "running" | "completed" | "failed" | "stopped";
@@ -82,6 +84,7 @@ export type Activity = {
   command?: any;
   exitCode?: number;
   artifactId?: string;
+  localResult?: boolean;
   error?: string;
 };
 export function appendOutput(

@@ -13,6 +13,7 @@ import frida
 from memory_scan import discover_frames
 
 HERE = pathlib.Path(__file__).resolve().parent
+CONTROLS_JS=(HERE/'copilot_controls.js').read_text(encoding='utf-8').strip().rstrip(';')
 
 DRAFT_TEXT_JS = r'''((e)=>{
 if(!e)return '';
@@ -24,6 +25,7 @@ return (state.root?.children||[]).map(walk).join('\n').replace(/[\u200B-\u200D\u
 
 STATE_JS = r'''(() => {
 const toMarkdown = __MARKDOWN_CONVERTER__;
+const controls = __CONTROLS__;
 const turns = Array.from(document.querySelectorAll('[data-testid="m365-chat-llm-web-ui-chat-message"]')).map(n => ({
   id:n.id,
   question:n.querySelector('[data-testid="chatQuestion"] [data-testid="chatOutput"]')?.innerText || '',
@@ -31,14 +33,18 @@ const turns = Array.from(document.querySelectorAll('[data-testid="m365-chat-llm-
   answerMarkdown:Array.from(n.querySelectorAll('[data-testid="markdown-reply"]')).map(e=>toMarkdown(e)).join('\n\n'),
   code:[...Array.from(n.querySelectorAll('pre code')).map(e=>e.textContent),
     ...Array.from(n.querySelectorAll('[aria-label="Code editor"]')).map(e=>Array.from(e.querySelectorAll('[data-line-index]')).sort((a,b)=>Number(a.dataset.lineIndex)-Number(b.dataset.lineIndex)).map(e=>e.textContent).join('\n'))],
-  copyReady:!!n.querySelector('[data-testid="CopyButtonTestId"]')
+  copyReady:!!n.querySelector('[data-testid="CopyButtonTestId"]'),
+  serviceError:controls.failure(n),
+  stopped:controls.stopped(n)
 }));
-return {title:document.title, origin:location.origin,
+return {title:document.title, origin:location.origin, route:location.pathname,
   editorPresent:!!document.querySelector('[contenteditable="true"][aria-label="Message Copilot"]'),
   draft:__DRAFT_TEXT__,
-  generating:Array.from(document.querySelectorAll('button')).some(e=>/stop (generating|response|responding)/i.test(e.getAttribute('aria-label')||'')),
+  attachments:controls.attachmentNames(),
+  generating:controls.stopButtons().length>0,
+  serviceError:controls.failure(Array.from(document.querySelectorAll('[role="alert"]')).find(e=>!e.closest('[data-testid="markdown-reply"],[data-testid="chatQuestion"]'))?.parentElement),
   turns};
-})()'''.replace('__DRAFT_TEXT__',DRAFT_TEXT_JS).replace('__MARKDOWN_CONVERTER__',(HERE/'copilot_markdown.js').read_text(encoding='utf-8'))
+})()'''.replace('__DRAFT_TEXT__',DRAFT_TEXT_JS).replace('__CONTROLS__',CONTROLS_JS).replace('__MARKDOWN_CONVERTER__',(HERE/'copilot_markdown.js').read_text(encoding='utf-8'))
 
 def teams_pid():
     """Enumerate native Windows processes without launching any shell."""
@@ -76,23 +82,23 @@ def teams_pid():
     return roots[0]
 
 class Bridge:
-    def __init__(self, pid=None, open_copilot=False, force_open=False):
+    def __init__(self, pid=None, open_copilot=False, force_open=False, timeout=30):
+        discovery_deadline=time.monotonic()+timeout
         self.session = frida.attach(pid or teams_pid())
         self.script = None
         try:
-            manifest = json.loads((HERE / 'build.json').read_text())
+            from manifests import BuildUnsupported, find, sha256_file
             # Read module path before installing hooks; fail closed for another build.
             probe = self.session.create_script("rpc.exports.path=()=>Process.getModuleByName('EmbeddedBrowserWebView.dll').path")
             probe.load()
             module_path = probe.exports_sync.path()
             probe.unload()
-            digest = hashlib.sha256(pathlib.Path(module_path).read_bytes()).hexdigest()
-            cached=HERE/'builds'/(digest+'.json')
-            if digest != manifest['moduleSha256'] and cached.is_file():manifest=json.loads(cached.read_text())
-            if digest != manifest['moduleSha256']:
-                raise RuntimeError('WebView2 build changed. Regenerate the symbol manifest before attaching native calls.')
+            digest = sha256_file(module_path)
+            manifest, trace = find(digest)
+            if manifest is None:
+                raise BuildUnsupported(module_path, digest, trace)
             self.manifest=manifest
-            source = (HERE / 'agent.js').read_text().replace('__CONFIG__', json.dumps(manifest))
+            source = (HERE / 'agent.js').read_text().replace('__CONFIG__', json.dumps(manifest)).replace('__THREAD_SELECTOR__',(HERE/'ui_thread_selector.js').read_text(encoding='utf-8').strip().rstrip(';'))
             self.script = self.session.create_script(source)
             self.script.load()
             self.rpc = self.script.exports_sync
@@ -103,7 +109,7 @@ class Bridge:
             self._select_frame(candidates)
             if open_copilot and (not self.frame or force_open):
                 self._open_copilot(manifest)
-                deadline=time.monotonic()+30
+                deadline=discovery_deadline
                 while time.monotonic()<deadline:
                     candidates=discover_frames(self.metadata['pid'],int(self.metadata['moduleBase'],16)+manifest['frameVtable'])
                     self._select_frame(candidates)
@@ -206,14 +212,15 @@ window[p.key]={parts:[],bytes:0};return {ready:true};})()""".replace('__PAYLOAD_
         finally:
             self.evaluate('delete window['+json.dumps(key)+']')
 
-    def read_download(self, name, timeout=120):
+    def read_download(self, name, timeout=120, turn_id=None, expected_route=None):
         key='__frida_download_'+uuid.uuid4().hex
-        payload=json.dumps({'name':name,'key':key})
+        payload=json.dumps({'name':name,'key':key,'turnId':turn_id,'expectedRoute':expected_route})
         started=self.evaluate(r"""(() => {
 const p=__PAYLOAD__;
-const turn=Array.from(document.querySelectorAll('[data-testid="m365-chat-llm-web-ui-chat-message"]')).at(-1);
+if(p.expectedRoute && location.pathname!==p.expectedRoute)return {error:'Wrong conversation for download'};
+const turn=p.turnId?document.getElementById(p.turnId):Array.from(document.querySelectorAll('[data-testid="m365-chat-llm-web-ui-chat-message"]')).at(-1);
 const link=Array.from(turn?.querySelectorAll('a')||[]).find(e=>e.download===p.name);
-if(!link)return {error:'Named download link missing from latest turn'};
+if(!link)return {error:'Named download link missing from selected turn'};
 if(!/^(blob:|data:|https:)/.test(link.href))return {error:'Unsupported download URL scheme'};
 window[p.key]={status:'pending'};
 (async()=>{try{const response=await fetch(link.href);if(!response.ok)throw new Error('Download HTTP '+response.status);const blob=await response.blob();window[p.key]={status:'done',data:new Uint8Array(await blob.arrayBuffer()),bytes:blob.size,mime:blob.type};}catch(error){window[p.key]={status:'error',error:String(error)};}})();
@@ -235,8 +242,41 @@ return {started:true};})()""".replace('__PAYLOAD__',payload))
             raise TimeoutError('Download fetch timed out')
         finally:self.evaluate('delete window['+json.dumps(key)+']')
 
-    def ask(self, prompt, timeout=180, resume_draft=False):
+    def stop_generation(self,expected_prompt):
+        result=self.evaluate('('+CONTROLS_JS+').stop('+json.dumps(expected_prompt)+')')
+        if not result or result.get('error'):raise RuntimeError('Stop Copilot unconfirmed; no steer was sent: '+str(result))
+        deadline=time.monotonic()+20;stable=0
+        while time.monotonic()<deadline:
+            state=self.state();stable=0 if state['generating'] else stable+1
+            if stable>=2:return {'stopped':True,'clicked':result.get('clicked',False)}
+            time.sleep(.3)
+        raise TimeoutError('Stop Copilot unconfirmed; no steer was sent')
+
+    def clear_attachments(self,route,expected):
+        state=self.state()
+        if (not isinstance(expected,list) or not 1<=len(expected)<=3 or
+            state.get('route')!=route or state.get('attachments')!=expected or state['generating']):
+            raise RuntimeError('Teams composer changed; inspect attachments again before continuing')
+        for index in range(len(expected)):
+            remaining=expected[index:]
+            script='('+CONTROLS_JS+').removeAttachment('+json.dumps(route)+','+json.dumps(remaining)+')'
+            if not self.evaluate(script):
+                raise RuntimeError('Could not remove the confirmed Teams attachment')
+            deadline=time.monotonic()+5
+            while time.monotonic()<deadline:
+                state=self.state()
+                if state.get('route')!=route or state['generating']:
+                    raise RuntimeError('Teams composer changed while removing attachments')
+                if state.get('attachments')==remaining[1:]:break
+                time.sleep(.2)
+            else:raise RuntimeError('Teams did not confirm attachment removal')
+        return {'removed':len(expected)}
+
+    def ask(self, prompt, timeout=180, resume_draft=False, cancelled=lambda:False, journal=None, progress=lambda value:None):
+        if cancelled():return {'completion':'not_sent','answer':'','sent':False}
         state = self.state()
+        if journal:journal.before_send(state)
+        initial_error=state.get('serviceError')
         if state['generating']:
             raise RuntimeError('Copilot is already generating')
         matching_draft = resume_draft and state['draft'].strip() == prompt.strip()
@@ -256,28 +296,48 @@ return {started:true};})()""".replace('__PAYLOAD__',payload))
             time.sleep(.3)
         else:
             raise RuntimeError('Editor did not settle; prompt has not been sent')
+        if cancelled():return {'completion':'not_sent','answer':'','sent':False}
+        if journal:journal.send_intent()
         sent = self.evaluate((r'''(() => {
+if(location.pathname!==''' + json.dumps(state.get('route')) + ''')return {error:'Copilot conversation changed before Send'};
 const e=document.querySelector('[contenteditable="true"][aria-label="Message Copilot"]');
 const b=document.querySelector('button[aria-label="Send"]');
 if((__DRAFT_TEXT__).trim()!==''' + text + '''.trim() || !b || b.disabled)return {error:'Draft changed or Send unavailable'};
 b.click();return {sent:true};})()''').replace('__DRAFT_TEXT__',DRAFT_TEXT_JS))
         if not sent or not sent.get('sent'):
             raise RuntimeError(f'Could not send: {sent}')
+        if journal:journal.submitted()
         # Once submitted, never auto-retry the prompt on a timeout.
         deadline = time.monotonic() + timeout
         previous = None
+        preview_previous = None
         stable = 0
         while time.monotonic() < deadline:
             state = self.state()
-            turn = next((t for t in reversed(state['turns']) if canonical(t['question']) == canonical(prompt)), None)
+            turn = journal.observe(state) if journal else next((t for t in reversed(state['turns']) if canonical(t['question']) == canonical(prompt)), None)
+            if cancelled():
+                stopped=self.stop_generation(prompt)
+                return {'completion':'stopped','answer':'','sent':True,**stopped}
+            if turn and turn.get('stopped') and not state['generating']:
+                return {'completion':'stopped','answer':'','sent':True,'route':state.get('route'),'id':turn.get('id')}
+            failure=(turn or {}).get('serviceError') or (state.get('serviceError') if state.get('serviceError')!=initial_error else None)
+            if failure:return {'completion':'failed','answer':'','sent':True,'serviceError':failure}
+            preview=(turn or {}).get('answerMarkdown') or (turn or {}).get('answer') or ''
+            if preview and preview != preview_previous:
+                preview_previous=preview
+                progress({'kind':'answer_preview','requestId':journal.value['requestId'] if journal else None,
+                    'turnId':turn.get('id'),'teamsId':(journal.value.get('teamsId') if journal else None),
+                    'text':preview[:1024*1024],'generating':bool(state['generating'])})
             if turn and turn['answer'] and turn['copyReady'] and not state['generating']:
                 stable = stable + 1 if turn['answer'] == previous else 0
                 previous = turn['answer']
-                if stable >= 2:
-                    return turn
+                # Preserve the original ~3s completion settling period while
+                # sampling preview text more frequently.
+                if stable >= 4:
+                    return {**turn,'route':state.get('route')}
             else:
                 stable = 0
-            time.sleep(1.5)
+            time.sleep(.75)
         raise TimeoutError('Prompt submitted, but response completion is unconfirmed. Inspect before retrying.')
 
     def close(self):

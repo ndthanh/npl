@@ -1,0 +1,14 @@
+{
+  "coreExecute": 567904,
+  "frameVtable": 7110624,
+  "frameExecute": 521568,
+  "coreVtable": 7112240,
+  "moduleSha256": "9b5fd599c0570d3d281412d70e11c24584eba2befec394bbee716e4edb741859",
+  "architecture": "x64",
+  "discoveryMethod": "string-xref-vtable-slots",
+  "confidence": "structural",
+  "symbols": false,
+  "runtimeVersion": "157.0.4341.46",
+  "generatedBy": "nopilot 0.7.2",
+  "pdbFailure": "not-published"
+}
